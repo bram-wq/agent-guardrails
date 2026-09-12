@@ -44,7 +44,8 @@ The same guards under OpenAI Codex CLI's hooks. Facts and their sources: [CODEX.
 | PreCompact (no matcher) | `trigger`, `custom_instructions` (passed through) | precompact-handoff | nothing (the handoff is a file) | 0 | 8 MiB, allow above |
 
 Adapter: unparseable stdin, an unknown event or tool, a guard that exits non-zero or prints
-non-JSON, or an internal exception → exit 0, empty stdout, the cause on stderr (fail open). One
+non-JSON, or an internal exception → exit 0, empty stdout, the cause on stderr (fail open). A guard
+whose stdout overruns 8 MiB is a deny on PreToolUse (its answer may have been a cut-off deny). One
 stdout write, natural exit, never exit 2. `try --agent codex` runs the Codex-shaped event through
 the adapter one guard at a time and prints the same table as `try`.
 

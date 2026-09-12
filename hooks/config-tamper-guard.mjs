@@ -17,7 +17,9 @@
 //
 // ── THE CONTROL SURFACE (path classes) ───────────────────────────────────────────────────────────────
 //   settings       <any dir>/.claude/settings.json · .claude/settings.local.json · ~/.claude/settings.json
-//   hooks          anything under <any dir>/.claude/hooks/ (the directory itself included)
+//                  · <any dir>/.codex/hooks.json · .codex/config.toml (Codex CLI's wiring — docs/CODEX.md)
+//   hooks          anything under <any dir>/.claude/hooks/ or <any dir>/.codex/hooks/ (the directory
+//                  itself included; under Codex that is also where the adapter lives)
 //   scope          any file named .agent-scope (scope-guard's contract)
 //   mcp            any file named .mcp.json
 //   global-config  ~/.claude.json ("Global config" keys apply only from it — settings reference)
@@ -146,6 +148,13 @@ function classifyShape(p, folded) {
       if (b === "hooks") return "hooks";
       if ((b === "settings.json" || b === "settings.local.json") && i + 2 === segs.length)
         return "settings";
+    }
+    // Codex CLI keeps the same two things under `.codex/`: the hook files (and the adapter that
+    // spawns the guards, re-read on EVERY tool call) and the wiring, `hooks.json` or the `[hooks]`
+    // table in `config.toml` (docs/CODEX.md F1–F3). Same classes, same refusal.
+    if (a === ".codex") {
+      if (b === "hooks") return "hooks";
+      if ((b === "hooks.json" || b === "config.toml") && i + 2 === segs.length) return "settings";
     }
     if (a === ".git") {
       if (b === "hooks") return "git-hooks";
@@ -559,8 +568,8 @@ export function decideEdit(toolInput, cwd) {
 }
 
 const CLASS_NAMES = {
-  settings: "a Claude Code settings file (hooks, permissions)",
-  hooks: "the .claude/hooks/ directory (the guards themselves)",
+  settings: "a Claude Code settings file or Codex CLI hooks.json/config.toml (hooks, permissions)",
+  hooks: "the .claude/hooks/ or .codex/hooks/ directory (the guards themselves, and the Codex adapter)",
   scope: ".agent-scope (scope-guard's contract)",
   mcp: ".mcp.json (MCP server wiring)",
   "global-config": "~/.claude.json (global config)",

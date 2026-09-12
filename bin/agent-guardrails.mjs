@@ -576,11 +576,18 @@ function scaffold(rest) {
 
 /** Does a hook entry point at one of OUR files? Matched on the basename at the END of the path. */
 function isShippedEntry(h, shipped) {
-  const paths = [h.command, ...(Array.isArray(h.args) ? h.args : [])].filter((s) => typeof s === "string");
+  // Compared with every separator folded to `/`: a shipped name can carry one (`adapters/codex.mjs`),
+  // and on Windows the installed path carries backslashes — without the fold, uninstall on Windows
+  // matched nothing and left the adapter entry in hooks.json (CI, 2026-09-12).
+  const fold = (s) => s.replace(/\\/g, "/");
+  const paths = [h.command, ...(Array.isArray(h.args) ? h.args : [])].filter((s) => typeof s === "string").map(fold);
   // A Codex entry is one command STRING: `node "<dir>/adapters/codex.mjs" fence-guard,…` — the shipped
-  // basename sits inside it, quoted, followed by the guard list. Matched as a path-terminated token.
-  const inside = (p, b) => new RegExp(`[\\\\/]${b.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}["'\\s]`).test(p);
-  return paths.some((p) => shipped.some((b) => p === b || p.endsWith(`/${b}`) || p.endsWith(`\\${b}`) || inside(p, b)));
+  // name sits inside it, CLOSED BY ITS QUOTE, then the guard list. Only a shipped name that carries a
+  // directory (the adapter) is looked for inside a string; a bare basename is matched at the END of
+  // a path or nowhere. Review 2026-09-12: a looser token match deleted a user's own
+  // `node /opt/mine/scope-guard.mjs --strict` on the Claude path while printing "foreign entries kept".
+  const inside = (p, b) => b.includes("/") && new RegExp(`"[^"]*/${b.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"(\\s|$)`).test(p);
+  return paths.some((p) => shipped.some((b) => p === b || p.endsWith(`/${b}`) || inside(p, b)));
 }
 
 /** Strip our entries from settings.hooks in place. Returns how many were removed. */

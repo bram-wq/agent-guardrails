@@ -54,7 +54,7 @@ fetched from a primary source on the read date; the adapter does **not** depend 
 | ours (Claude Code) | Codex event · matcher written by `init` | adapter behaviour |
 |---|---|---|
 | PreToolUse · `Bash` | `PreToolUse` · `^Bash$` | pass-through: same field names (F5–F7); one entry spawns the seven Bash guards and folds their answers — any deny holds (the fold is done here because F19's combination rule is NE) |
-| PreToolUse · `Edit\|MultiEdit\|Write\|NotebookEdit` | `PreToolUse` · `^apply_patch$` | the patch text (F7) is split into one synthetic `Write`/`Edit` event per `*** Add/Update/Delete File:` header, relative paths resolved against `cwd`; scope-guard, secret-write-guard and config-tamper-guard judge each file. **Accepted limitation (F21 NE):** a patch with no recognisable header yields no event and is allowed |
+| PreToolUse · `Edit\|MultiEdit\|Write\|NotebookEdit` | `PreToolUse` · `^apply_patch$` | the patch text (F7) is split into one synthetic `Write`/`Edit` event per `*** Add/Update/Delete File:` header, relative paths resolved against `cwd`; scope-guard, secret-write-guard and config-tamper-guard judge each file. A non-empty patch with no recognisable header yields no event and is **denied** with a reason naming the header form (F21 NE: the grammar is unconfirmed, so unjudgeable is refused, not allowed); an empty body is allowed |
 | Stop | `Stop` (no matcher) | pass-through (F8); block shape identical (F16) |
 | SessionStart | `SessionStart` (no matcher) | pass-through (F8); context shape identical (F17) |
 | PreCompact | `PreCompact` (no matcher) | pass-through (F8); the handoff is a file, nothing is printed |
@@ -81,11 +81,20 @@ turn a guard's deny into noise: the deny is always exit 0 + JSON, the channel F1
   event; under Codex the events are the same JSON, so a Claude `doctor` on the same checkout proves
   the guards, and `try --agent codex` proves the adapter path. A Codex-specific doctor would re-run
   the same processes with a different label.
-- **`config-tamper-guard` does not list `.codex/`** as part of the control surface (its list is
-  `.claude/settings*.json`, `.claude/hooks/`, `.agent-scope`, `.mcp.json`, git hooks, managed
-  settings). A write to `.codex/hooks.json` from a Codex session is therefore not refused. Adding
-  the directory is a one-line change to that guard's surface table; it is not made here because it
-  is a guard-policy change, not an adapter change, and needs its own paired cases.
+- **A patch with no recognisable file header is refused, not allowed** (changed after review on
+  2026-09-12). F21 is NE, so a body in a shape the splitter does not know (a unified diff, prose)
+  cannot be mapped to a path and no file guard can judge it; the adapter denies with a reason that
+  names the header form, the same fail direction as its oversize rule. An empty body is allowed:
+  nothing was asked. If Codex adds a header shape, the deny is visible on the next patch, not silent.
+- **`.codex/` IS part of `config-tamper-guard`'s surface** (same day): `.codex/hooks/` (the guards
+  and the adapter, which is re-spawned on every tool call, so a one-line edit to it is in force on
+  the next command), `.codex/hooks.json` and `.codex/config.toml` (the `[hooks]` table). Five paired
+  cases in the guard's own suite; `.codex/prompts/`, `.codex-notes/`, `codex/` and an INVOCATION of
+  the adapter stay allowed.
+- **`AGR_GUARDS_DIR`** redirects the guards directory only under `HOOK_CTX=test` (the suite's fake
+  guards). Set anywhere else it is ignored and said so on stderr, so a wrapper or `.envrc` cannot
+  point every guard at an empty directory. A guard whose stdout overruns the 8 MiB buffer is a deny
+  on PreToolUse, never a silent allow.
 - **`init --agent codex` writes absolute paths** into a project-level `.codex/hooks.json` (F13: no
   expansion and no interpreter is documented, so `$(git rev-parse …)` or `${VAR}` would be a bet on
   one shell). A clone at another path re-runs `init`. `--user` writes `~/.codex/hooks.json`, which

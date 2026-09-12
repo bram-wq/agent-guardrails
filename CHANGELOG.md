@@ -19,6 +19,24 @@ All notable changes to this project are recorded here. The format follows
   prints the same verdict table through the adapter.
 - `docs/CODEX.md`: the Codex contract, fact by fact with URL and read date; facts that could not be
   fetched are tagged NE and the adapter does not depend on them.
+- `config-tamper-guard`: `.codex/hooks/`, `.codex/hooks.json` and `.codex/config.toml` join the
+  control surface (five paired cases). Without it a Codex session could edit the adapter it is
+  spawned through, in force on the next tool call.
+
+### Changed
+
+- Codex adapter: a non-empty `apply_patch` with no recognisable file header is denied with a reason
+  naming the header form, not passed unjudged (the loss on a silent allow was the whole file-edit
+  surface). `AGR_GUARDS_DIR` is honoured only under `HOOK_CTX=test`. A guard whose stdout overruns
+  the 8 MiB spawn buffer is a deny on PreToolUse, never an allow.
+
+### Fixed
+
+- `uninstall` matched a shipped basename anywhere inside a foreign command string and could delete
+  a user's own `node /opt/mine/scope-guard.mjs --strict` while printing "foreign entries kept"; the
+  in-string match now applies only to the quoted adapter path. `uninstall --agent codex` on Windows
+  left the adapter entry in `hooks.json` (backslash path vs `adapters/codex.mjs`); separators are
+  folded before matching, with a Windows-shaped case that runs on every OS.
 
 ## [0.3.1] — 2026-09-12
 

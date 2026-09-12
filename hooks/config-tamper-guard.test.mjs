@@ -112,6 +112,16 @@ PAIR("Read tool is not judged but Write of a hook is", edit(".claude/hooks/x.mjs
 // ── EDIT TOOLS: hooks dir, scope, mcp, git, managed, global ────────────────────────────────────────
 PAIR("★ Write .claude/hooks/goal-guard.mjs", edit(".claude/hooks/goal-guard.mjs"),
      "Write hooks/goal-guard.mjs at the repo ROOT (a repo that develops hooks)", edit("hooks/goal-guard.mjs"));
+PAIR("★ Write .codex/hooks/adapters/codex.mjs (the Codex adapter, re-read every tool call)", edit(".codex/hooks/adapters/codex.mjs"),
+     "Write .codex-notes/adapters/codex.mjs (not the .codex dir)", edit(".codex-notes/adapters/codex.mjs"));
+PAIR("Write .codex/hooks.json (Codex wiring)", edit(".codex/hooks.json"),
+     "Write .codex/prompts/review.md (a prompt, not control)", edit(".codex/prompts/review.md"));
+PAIR("Write .codex/config.toml (holds the [hooks] table)", edit(".codex/config.toml"),
+     "Write codex/config.toml (no dot: a project directory)", edit("codex/config.toml"));
+PAIR("rm -f .codex/hooks.json", bash("rm -f .codex/hooks.json"),
+     "cat .codex/hooks.json", bash("cat .codex/hooks.json"));
+PAIR("sed -i s/deny/allow/ .codex/hooks/adapters/codex.mjs", bash("sed -i s/deny/allow/ .codex/hooks/adapters/codex.mjs"),
+     "node .codex/hooks/adapters/codex.mjs fence-guard (invoking the adapter)", bash("node .codex/hooks/adapters/codex.mjs fence-guard"));
 PAIR("Write .claude/hooks/new-guard.mjs (not yet existing)", edit(".claude/hooks/new-guard.mjs"),
      "Write .claude/hooks-notes.md (not the hooks dir)", edit(".claude/hooks-notes.md"));
 PAIR("NotebookEdit under .claude/hooks/", verdict(run({ tool_name: "NotebookEdit", tool_input: { notebook_path: ".claude/hooks/x.ipynb" } })),

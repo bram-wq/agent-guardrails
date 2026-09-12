@@ -1,7 +1,7 @@
 // Behavioral test for bin/agent-guardrails.mjs — run: `node bin/agent-guardrails.test.mjs`.
 // Drives the CLI exactly as a user would (a child process, cwd = a scratch project) and asserts on
 // the files it leaves behind. No test framework.
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
@@ -432,7 +432,10 @@ const backups = (dir) =>
   check(`codex: one entry per Claude matcher group (${claudeGroups}), each a command string, no args array`,
     entries.length === claudeGroups && entries.every((e) => typeof e.command === "string" && !("args" in e)), JSON.stringify(entries));
   const adapterPath = join(dir, ".codex", "hooks", "adapters", "codex.mjs");
-  check("codex: every entry spawns the installed adapter by absolute, quoted path", entries.every((e) => e.command.startsWith(`node "${adapterPath}" `)), entries.map((e) => e.command).join("\n"));
+  // init writes the path as the child's cwd resolves it; on macOS the tmpdir is a symlink (/var →
+  // /private/var), so the expected prefix is the canonical form, not the spelling the test used.
+  const canonicalAdapter = join(realpathSync(dir), ".codex", "hooks", "adapters", "codex.mjs");
+  check("codex: every entry spawns the installed adapter by absolute, quoted path", entries.every((e) => e.command.startsWith(`node "${canonicalAdapter}" `)), entries.map((e) => e.command).join("\n"));
   const bashEntry = h?.hooks?.PreToolUse?.find((g) => g.matcher === "^Bash$")?.hooks?.[0];
   const editEntry = h?.hooks?.PreToolUse?.find((g) => g.matcher === "^apply_patch$")?.hooks?.[0];
   check("codex: the Bash group becomes matcher ^Bash$ with every Bash guard", !!bashEntry && /fence-guard,prose-guard,runaway-guard,piped-verdict-guard,root-cause-guard,secret-write-guard,config-tamper-guard$/.test(bashEntry.command), bashEntry?.command);
@@ -483,6 +486,41 @@ const backups = (dir) =>
   check("codex-merge: init then uninstall round-trips hooks.json byte-for-byte", un.code === 0 && readFileSync(join(dir, ".codex", "hooks.json"), "utf8") === original, readFileSync(join(dir, ".codex", "hooks.json"), "utf8"));
   const dry = cli(["uninstall", "--agent", "codex", "--dry-run"], dir);
   check("codex-merge: a second uninstall is a no-op", /nothing to do/.test(dry.out) || /0 hook entries removed/.test(dry.out), dry.out);
+}
+
+// ── 15b. a Windows-shaped hooks.json is unmerged on every OS (CI red 2026-09-12: uninstall on
+//        windows-latest matched nothing because the shipped name is `adapters/codex.mjs` and the
+//        installed command carried backslashes) ──────────────────────────────────────────────────
+{
+  const dir = scratchDir("agr-codex-winpath");
+  mkdirSync(join(dir, ".codex"), { recursive: true });
+  const ours = { type: "command", command: 'node "C:\\Users\\dev\\proj\\.codex\\hooks\\adapters\\codex.mjs" fence-guard,prose-guard', timeout: 10 };
+  const theirs = { type: "command", command: 'python3 "C:\\tools\\codex-policy.py"' };
+  writeFileSync(join(dir, ".codex", "hooks.json"), JSON.stringify({ hooks: { PreToolUse: [{ matcher: "^Bash$", hooks: [theirs, ours] }] } }, null, 2) + "\n");
+  const un = cli(["uninstall", "--agent", "codex"], dir);
+  const after = JSON.parse(readFileSync(join(dir, ".codex", "hooks.json"), "utf8"));
+  const left = after.hooks?.PreToolUse?.[0]?.hooks ?? [];
+  check("codex-winpath: MUST-FIRE — our backslash-path adapter entry is removed", un.code === 0 && !left.some((h) => /codex\.mjs/.test(h.command)), un.out + "\n" + JSON.stringify(after));
+  check("codex-winpath: MUST-NOT-FIRE — the foreign backslash-path entry stays, byte-identical", left.length === 1 && left[0].command === theirs.command, JSON.stringify(left));
+}
+
+// ── 15c. uninstall never takes a user's own entry that merely NAMES one of our basenames mid-string
+//        (review 2026-09-12: a token match deleted `node /opt/mine/scope-guard.mjs --strict`) ─────
+{
+  const dir = scratchDir("agr-foreign-token");
+  mkdirSync(join(dir, ".claude"), { recursive: true });
+  const theirs = { type: "command", command: "node /opt/mine/scope-guard.mjs --strict" };
+  const original = JSON.stringify({ hooks: { PreToolUse: [{ matcher: "Bash", hooks: [theirs] }] } }, null, 2) + "\n";
+  writeFileSync(join(dir, ".claude", "settings.json"), original);
+  const un = cli(["uninstall"], dir);
+  check("foreign-token: MUST-NOT-FIRE — a foreign entry with our basename mid-command survives uninstall byte-for-byte", un.code === 0 && readFileSync(join(dir, ".claude", "settings.json"), "utf8") === original, un.out);
+  const dir2 = scratchDir("agr-foreign-token-codex");
+  mkdirSync(join(dir2, ".codex"), { recursive: true });
+  const theirs2 = { type: "command", command: 'node /opt/mine/adapters/codex.mjs --strict' };
+  const original2 = JSON.stringify({ hooks: { PreToolUse: [{ matcher: "^Bash$", hooks: [theirs2] }] } }, null, 2) + "\n";
+  writeFileSync(join(dir2, ".codex", "hooks.json"), original2);
+  const un2 = cli(["uninstall", "--agent", "codex"], dir2);
+  check("foreign-token: MUST-NOT-FIRE — an unquoted foreign adapters/codex.mjs path is not ours", un2.code === 0 && readFileSync(join(dir2, ".codex", "hooks.json"), "utf8") === original2, un2.out);
 }
 
 // ── 16. try --agent codex prints the same verdict table, through the adapter ─────────────────────

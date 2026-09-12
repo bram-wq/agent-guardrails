@@ -8,7 +8,8 @@
 // PreToolUse payload fails CLOSED, an oversize Stop fails open (a Stop that blocks on oversize input
 // would loop). apply_patch is split per file so the file guards judge every path a patch touches.
 import { spawnSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { scratchDir } from "../_scratch-dir.mjs";
@@ -111,7 +112,11 @@ pair("config-tamper-guard", "sed -i 's/goal-guard/goal-guard.off/' .claude/setti
   check("FIRE  scope-guard: a patch touching one in-scope AND one out-of-scope file is denied", run(patch(multi, lane), ["scope-guard"]).verdict, "deny");
   const del = `*** Begin Patch\n*** Delete File: apps/web/auth.ts\n*** End Patch\n`;
   check("FIRE  scope-guard: a Delete File outside scope is denied", run(patch(del, lane), ["scope-guard"]).verdict, "deny");
-  check("ALLOW apply_patch with no recognisable header → nothing to judge (documented limitation)", run(patch("not a patch at all", lane), ["scope-guard", "secret-write-guard"]).verdict, "allow");
+  check("DENY  apply_patch with text but no recognisable header → refused, not passed unjudged", run(patch("not a patch at all", lane), ["scope-guard", "secret-write-guard"]).verdict, "deny");
+  check("DENY  a unified-diff-shaped body carrying a secret is refused even though no file guard could see it", run(patch("*** Begin Patch\n--- a/.env\n+++ b/.env\n@@ -0,0 +1 @@\n+AWS_ACCESS_KEY_ID=AKIAJ7Q2M4X9K1LP3ZRW\n*** End Patch", lane), ["secret-write-guard"]).verdict, "deny");
+  check("      …and the reason names the header form to use", /Add File/.test(run(patch("not a patch at all", lane), ["scope-guard"]).reason ?? ""), true);
+  check("ALLOW apply_patch with an EMPTY body → nothing was asked, nothing refused", run(patch("", lane), ["scope-guard", "secret-write-guard"]).verdict, "allow");
+  check("ALLOW apply_patch with a non-string command → nothing to judge", run({ ...patch("", lane), tool_input: { command: null } }, ["scope-guard"]).verdict, "allow");
 
   // the splitter itself
   const evs = patchToEvents(`*** Begin Patch\n*** Add File: a.txt\n+hello\n+world\n*** Update File: b.txt\n*** Move to: c.txt\n@@ -1 +1 @@\n-x\n+y\n*** Delete File: d.txt\n*** End Patch`, { cwd: "/lane" });
@@ -153,8 +158,25 @@ pair("config-tamper-guard", "sed -i 's/goal-guard/goal-guard.off/' .claude/setti
   check("OPEN  a guard that prints junk → allow", run(bash("x"), ["junk-guard"], env).verdict, "allow");
   check("OPEN  a crashing guard beside a denying one → the deny still holds", run(bash("x"), ["crash-guard", "deny-guard"], env).verdict, "deny");
   check("OPEN  a guard name that does not exist → allow, named on stderr", /guard not found/.test(run(bash("git push origin main"), ["ghost-guard"], env).stderr) && run(bash("git push origin main"), ["ghost-guard"], env).verdict === "allow", true);
-  check("OPEN  a guard name with a path in it is rejected, never spawned", run(bash("git push origin main"), ["../fence-guard"]).verdict, "allow");
+  {
+    const r = run(bash("git push origin main"), ["../fence-guard"]);
+    check("OPEN  a guard name with a path in it is rejected (named on stderr), never spawned", /ignoring guard name "\.\.\/fence-guard"/.test(r.stderr) && r.verdict === "allow", true);
+  }
   check("OPEN  no guard named → allow, exit 0", run(bash("git push origin main"), []).verdict, "allow");
+}
+
+// ── the guards-dir override is a test-only switch, and a truncated answer is a deny ─────────────
+{
+  const fake = mkdtempSync(join(tmpdir(), "codex-adapter-gate-"));
+  const noTest = { ...ENV, AGR_GUARDS_DIR: fake };
+  delete noTest.HOOK_CTX;
+  const r = run(bash("git push origin main"), ["fence-guard"], noTest);
+  check("GATE  AGR_GUARDS_DIR without HOOK_CTX=test is ignored: the real fence-guard still denies", r.verdict, "deny");
+  check("      …and the adapter says so on stderr", /AGR_GUARDS_DIR is ignored/.test(r.stderr), true);
+  writeFileSync(join(fake, "flood-guard.mjs"), `process.stdout.write(JSON.stringify({hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:"x".repeat(${MAX_EVENT_BYTES} + 1024)}}));\n`);
+  const flood = run(bash("x"), ["flood-guard"], { ...ENV, AGR_GUARDS_DIR: fake });
+  check("DENY  a guard whose answer overruns the buffer is refused, never read as allow", flood.verdict, "deny");
+  check("      …with a reason that names the guard and the byte cap", /flood-guard\.mjs printed more than/.test(flood.reason ?? ""), true);
 }
 
 // ── garbage, oversize, unknown ───────────────────────────────────────────────────────────────────

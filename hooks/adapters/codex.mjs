@@ -42,9 +42,17 @@ const GUARD_TIMEOUT_MS = 15_000;
 const GUARD_NAME_RE = /^[a-z0-9][a-z0-9-]*(\.mjs)?$/;
 const DEFAULT_GUARDS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 
-/** The directory the guards live in: beside this adapter's parent by default, `AGR_GUARDS_DIR` for tests. */
+/**
+ * The directory the guards live in: beside this adapter's parent. `AGR_GUARDS_DIR` redirects it ONLY
+ * under `HOOK_CTX=test` (the suite's fake guards). Review 2026-09-12: honoured unconditionally, one env
+ * var in a wrapper or `.envrc` pointed every guard at an empty directory and stood all ten down with
+ * nothing recorded. Outside a test run it is ignored and said so on stderr.
+ */
 export function guardsDir(env = process.env) {
-  return env.AGR_GUARDS_DIR ? resolve(env.AGR_GUARDS_DIR) : DEFAULT_GUARDS_DIR;
+  if (!env.AGR_GUARDS_DIR) return DEFAULT_GUARDS_DIR;
+  if (env.HOOK_CTX === "test") return resolve(env.AGR_GUARDS_DIR);
+  process.stderr.write(`codex adapter: AGR_GUARDS_DIR is ignored outside HOOK_CTX=test; guards resolve from ${DEFAULT_GUARDS_DIR}\n`);
+  return DEFAULT_GUARDS_DIR;
 }
 
 /** Guard names from argv (comma- or space-separated), validated; anything else is dropped and named on stderr. */
@@ -128,8 +136,12 @@ export function translate(ev) {
 
 /** Spawn one guard on one event; classify its stdout. Never throws. */
 export function runGuard(path, ev, env = process.env) {
-  const r = spawnSync(process.execPath, [path], { input: JSON.stringify(ev), encoding: "utf8", timeout: GUARD_TIMEOUT_MS, env, cwd: ev.cwd && existsSync(ev.cwd) ? ev.cwd : undefined });
+  const r = spawnSync(process.execPath, [path], { input: JSON.stringify(ev), encoding: "utf8", timeout: GUARD_TIMEOUT_MS, maxBuffer: MAX_EVENT_BYTES, env, cwd: ev.cwd && existsSync(ev.cwd) ? ev.cwd : undefined });
   const out = { deny: null, block: null, context: null, system: null, error: null };
+  // A guard whose output overran the buffer may have been a deny that got cut off. Truncation is a
+  // deny on PreToolUse (the fold ignores a deny on every other event), never a silent allow.
+  if (r.error && r.error.code === "ENOBUFS")
+    return { ...out, deny: `codex adapter: ${basename(path)} printed more than ${MAX_EVENT_BYTES} bytes, so its answer cannot be read. Refused rather than passed unjudged.` };
   if (r.error) return { ...out, error: r.error.message };
   if (r.status !== 0) return { ...out, error: `exit ${r.status ?? r.signal}` };
   const stdout = (r.stdout ?? "").trim();
@@ -200,6 +212,18 @@ function main() {
     return ""; // a Stop that blocks on oversize input would loop; SessionStart/PreCompact have nothing to refuse
   }
   const events = translate(ev);
+  // An apply_patch with text but no recognisable file header cannot be mapped to a path, so no file
+  // guard can judge it. Refused, like the oversize case above, not passed through: the loss on a
+  // silent allow is the whole file-edit surface (review 2026-09-12; header grammar is docs/CODEX.md F21).
+  const patchText = ev.hook_event_name === "PreToolUse" && ev.tool_name === "apply_patch" ? ev.tool_input?.command : undefined;
+  if (events.length === 0 && typeof patchText === "string" && patchText.trim() !== "")
+    return JSON.stringify({
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "deny",
+        permissionDecisionReason: "codex adapter: this apply_patch has no `*** Add File:` / `*** Update File:` / `*** Delete File:` header, so no guard can tell which file it touches. Refused rather than passed unjudged; write the patch in Codex's own header form (docs/CODEX.md F21).",
+      },
+    });
   if (events.length === 0) return "";
   const dir = guardsDir();
   const answers = [];

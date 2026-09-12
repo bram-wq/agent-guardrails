@@ -6,7 +6,7 @@ looping, filling a disk, or pressing the one button that cannot be un-pressed.**
 [![guard tests](https://github.com/bram-wq/agent-guardrails/actions/workflows/test.yml/badge.svg)](https://github.com/bram-wq/agent-guardrails/actions/workflows/test.yml)
 ![node](https://img.shields.io/badge/node-%E2%89%A520-brightgreen) ![deps](https://img.shields.io/badge/dependencies-0-blue) ![license](https://img.shields.io/badge/license-MIT-lightgrey)
 
-Ten hooks (eight lifted from production, two built from a survey of the field), 1,690 test cases, zero dependencies, one-command install and uninstall.
+Ten hooks (eight lifted from production, two built from a survey of the field), 1,712 test cases, zero dependencies, one-command install and uninstall.
 Every guard has a must-fire test (the incident, verbatim) and a must-not-fire test (its legitimate
 twin), because a guard that blocks real work gets switched off within a week. The test total on this
 page is printed by the runner, not typed.
@@ -46,8 +46,9 @@ npx github:bram-wq/agent-guardrails try --agent codex 'git push origin main 2>&1
 
 Covered under OpenAI Codex CLI: every Bash guard on `PreToolUse`, the three file guards on
 `apply_patch` (split per file), and the Stop, SessionStart and PreCompact guards — same verdicts,
-Codex's own deny shape. Not covered: `doctor`, a patch with no recognisable file header (allowed),
-and `.codex/` as a tamper surface. Every fact relied on, with its source and date: [`docs/CODEX.md`](docs/CODEX.md).
+Codex's own deny shape. `.codex/hooks/`, `.codex/hooks.json` and `.codex/config.toml` are part of
+config-tamper-guard's surface. A patch with no recognisable file header is refused, not passed
+unjudged. Not covered: `doctor`. Every fact relied on, with its source and date: [`docs/CODEX.md`](docs/CODEX.md).
 
 ## The hooks
 
@@ -98,7 +99,7 @@ What this repo has that the others do not, as far as the survey found:
   `ui-evidence-guard` refuses "done" on a UI branch with no rendered screenshot. The other sets guard
   what the agent *runs*; these two guard what it *claims*.
 - **The incident, verbatim, as the must-fire test, and its legitimate twin as the must-not-fire test.**
-  1,690 cases across ten guards and the Codex adapter, printed by the runner. Mutation-tested by hand: each guard's deny branch
+  1,712 cases across ten guards and the Codex adapter, printed by the runner. Mutation-tested by hand: each guard's deny branch
   was removed and the suite went red.
 - **Fire logs with denominators.** `report` prints runs, fires and rate per hook per project, so a guard
   is pruned on a count, never on an opinion. `piped-verdict-guard` was narrowed from every piped command
