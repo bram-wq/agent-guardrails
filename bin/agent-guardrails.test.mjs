@@ -10,9 +10,22 @@ import { projectKey } from "../hooks/_fire-log.mjs";
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const CLI = join(ROOT, "bin", "agent-guardrails.mjs");
-const SHIPPED = readdirSync(join(ROOT, "hooks")).filter(
-  (f) => f.endsWith(".mjs") && !f.endsWith(".test.mjs"),
+// Every file init ships, relative to hooks/ with `/` separators: the hooks, the helpers, and the data
+// files a hook loads beside itself (rules/*.json). Mirrors packagedHookFiles() in the CLI.
+const listFiles = (dir, rel = "") =>
+  readdirSync(dir, { withFileTypes: true }).flatMap((d) =>
+    d.isDirectory() ? listFiles(join(dir, d.name), `${rel}${d.name}/`) : [`${rel}${d.name}`],
+  );
+const SHIPPED = listFiles(join(ROOT, "hooks")).filter(
+  (f) => (f.endsWith(".mjs") && !f.endsWith(".test.mjs") && !f.includes("/")) || /^rules\/[^/]+\.json$/.test(f),
 );
+const EXAMPLE = JSON.parse(readFileSync(join(ROOT, "settings.example.json"), "utf8")).hooks;
+const entryFile = (h) => [h.command, ...(h.args ?? [])].find((a) => typeof a === "string" && a.endsWith(".mjs"))?.split("/").pop();
+/** settings.example.json may wire a hook ahead of its file landing; init merges only what ships. */
+const exampleEntries = (pred = () => true) =>
+  Object.entries(EXAMPLE).flatMap(([ev, groups]) => groups.flatMap((g) => g.hooks.filter((h) => pred(ev, g, h))));
+const SHIPPED_ENTRIES = exampleEntries((ev, g, h) => SHIPPED.includes(entryFile(h)));
+const UNSHIPPED_ENTRIES = exampleEntries((ev, g, h) => !SHIPPED.includes(entryFile(h)));
 
 function cli(args, cwd, env = {}) {
   const r = spawnSync(process.execPath, [CLI, ...args], {
@@ -39,7 +52,7 @@ const backups = (dir) =>
   const dir = scratchDir("agr-init");
   const r = cli(["init"], dir);
   check("init exits 0", r.code === 0, r.out);
-  const installed = readdirSync(join(dir, ".claude", "hooks"));
+  const installed = listFiles(join(dir, ".claude", "hooks"));
   check(
     "init copies every non-test hook (and nothing else)",
     installed.length === SHIPPED.length && installed.every((f) => SHIPPED.includes(f)),
@@ -53,13 +66,16 @@ const backups = (dir) =>
     s = null;
   }
   check("init writes valid settings.json", s !== null);
-  const example = JSON.parse(readFileSync(join(ROOT, "settings.example.json"), "utf8")).hooks;
-  const wanted = Object.values(example).flatMap((g) => g.flatMap((x) => x.hooks)).length;
+  const wanted = SHIPPED_ENTRIES.length;
   check(
-    `merged settings carry all ${wanted} hook entries from settings.example.json`,
+    `merged settings carry all ${wanted} SHIPPED hook entries from settings.example.json (${UNSHIPPED_ENTRIES.length} wired ahead of their file)`,
     s && hookEntries(s).length === wanted,
     s ? `got ${hookEntries(s).length}` : "",
   );
+  for (const h of UNSHIPPED_ENTRIES)
+    check(`an example entry whose hook does not ship yet is skipped AND named: ${entryFile(h)}`, new RegExp(`skip\\s+.*${entryFile(h)}.*does not ship`).test(r.out), r.out);
+  check("no merged entry points at a file init did not copy", s && hookEntries(s).every((h) => existsSync(join(dir, ".claude", "hooks", entryFile(h)))), s ? hookEntries(s).map(entryFile).join(",") : "");
+  check("init never invents an `if` on a shipped entry", s && hookEntries(s).every((h) => !("if" in h)), "");
   check("init on a fresh project writes no backup", backups(dir).length === 0);
   check("init prints what it did", /copy/.test(r.out) && /settings\.json/.test(r.out), r.out);
 
@@ -108,9 +124,7 @@ const backups = (dir) =>
     "pre-existing hook in the same matcher group is kept, first",
     bashGroup && bashGroup.hooks[0].args[0] === "my-own-guard.mjs",
   );
-  const exampleBash = JSON.parse(readFileSync(join(ROOT, "settings.example.json"), "utf8"))
-    .hooks.PreToolUse.filter((g) => g.matcher === "Bash")
-    .reduce((n, g) => n + g.hooks.length, 0);
+  const exampleBash = exampleEntries((ev, g, h) => ev === "PreToolUse" && g.matcher === "Bash" && SHIPPED.includes(entryFile(h))).length;
   check(
     "new Bash guards are appended to the existing Bash group, not a duplicate group",
     s.hooks.PreToolUse.filter((g) => g.matcher === "Bash").length === 1 &&
@@ -242,17 +256,15 @@ const backups = (dir) =>
     readFileSync(join(dir, ".claude", "settings.json"), "utf8"),
   );
   check("a timestamped backup is written before unmerging", backups(dir).length === beforeBackups + 1);
-  const left = readdirSync(join(dir, ".claude", "hooks")).sort();
+  const left = listFiles(join(dir, ".claude", "hooks")).sort();
   check("foreign hook file survives", left.includes("my-own-guard.mjs"), left.join(","));
   check("byte-identical shipped copies are deleted", !left.includes("prose-guard.mjs") && !left.includes("_fire-log.mjs"), left.join(","));
   check("the locally modified hook is kept…", left.includes("runaway-guard.mjs"), left.join(","));
   check("…and reported as kept", /keep\s+.*runaway-guard\.mjs.*locally modified/.test(r.out), r.out);
   // counts come from what ships, never typed: a guard added to hooks/ must not turn this red
-  const exampleEntries = Object.values(JSON.parse(readFileSync(join(ROOT, "settings.example.json"), "utf8")).hooks)
-    .flatMap((g) => g.flatMap((x) => x.hooks)).length;
   check(
     "uninstall summary counts entries, files and kept files",
-    r.out.includes(`${exampleEntries} hook entries removed, ${SHIPPED.length - 1} file(s) deleted, 1 modified file(s) kept`),
+    r.out.includes(`${SHIPPED_ENTRIES.length} hook entries removed, ${SHIPPED.length - 1} file(s) deleted, 1 modified file(s) kept`),
     r.out,
   );
 
@@ -265,7 +277,7 @@ const backups = (dir) =>
   cli(["init"], fresh);
   const u = cli(["uninstall"], fresh);
   check("uninstall after a from-scratch init exits 0", u.code === 0, u.out);
-  check("…leaves an empty settings object and no hook files", readFileSync(join(fresh, ".claude", "settings.json"), "utf8") === "{}\n" && readdirSync(join(fresh, ".claude", "hooks")).length === 0);
+  check("…leaves an empty settings object and no hook files", readFileSync(join(fresh, ".claude", "settings.json"), "utf8") === "{}\n" && listFiles(join(fresh, ".claude", "hooks")).length === 0);
 }
 
 // ── 10. try runs a command through every Bash guard without a session ────────────────────────────
@@ -278,9 +290,9 @@ const backups = (dir) =>
   const allow = cli(["try", "npm test"], dir);
   check("try 'npm test' exits 0", allow.code === 0, allow.out);
   check("…and every Bash guard prints allow", !/^(DENY|warn|error)/m.test(allow.out) && /^allow runaway-guard\.mjs$/m.test(allow.out), allow.out);
-  const bashGuards = SHIPPED.filter((f) => !f.startsWith("_") && !/^(ui-evidence|goal|scope)-guard\.mjs$/.test(f));
+  const bashGuards = SHIPPED.filter((f) => f.endsWith(".mjs") && !f.startsWith("_") && !/^(ui-evidence|goal|scope)-guard\.mjs$|^precompact-handoff\.mjs$/.test(f));
   check(`…one line per Bash guard (${bashGuards.length})`, (allow.out.match(/^allow /gm) ?? []).length === bashGuards.length, allow.out);
-  check("try with no Stop/Edit guard in the list", !/goal-guard|ui-evidence-guard|scope-guard/.test(allow.out), allow.out);
+  check("try with no Stop/Edit/PreCompact guard in the list", !/goal-guard|ui-evidence-guard|scope-guard|precompact-handoff/.test(allow.out), allow.out);
   const warn = cli(["try", 'git commit -m "fix: TypeError: x is not a function"'], dir);
   check("a prompt-only guard prints warn, and does not fail the command", warn.code === 0 && /^warn  root-cause-guard\.mjs: /m.test(warn.out), warn.out);
   check("try without a command exits 1", cli(["try"], dir).code === 1);
@@ -324,6 +336,7 @@ const backups = (dir) =>
   check("doctor sends scope-guard an Edit event", /ok\s+scope-guard\.mjs: allows its benign event \(PreToolUse\/Edit\)/.test(doc.out), doc.out);
   check("doctor sends ui-evidence-guard a Stop event", /ok\s+ui-evidence-guard\.mjs: allows its benign event \(Stop\)/.test(doc.out), doc.out);
   check("doctor sends goal-guard Stop and SessionStart", /ok\s+goal-guard\.mjs: allows its benign event \(Stop, SessionStart\)/.test(doc.out), doc.out);
+  check("doctor sends precompact-handoff a PreCompact event, no incident on file", /ok\s+precompact-handoff\.mjs: allows its benign event \(PreCompact\); no incident on file/.test(doc.out), doc.out);
   check("doctor still checks node and settings paths", /ok\s+node v?\d+/.test(doc.out) && /settings → /.test(doc.out), doc.out);
 
   // a hook truncated to `process.exit(0)` parses and allows everything — the benign check alone passed it
@@ -340,6 +353,63 @@ const backups = (dir) =>
   );
   const deny = cli(["doctor"], dir);
   check("doctor fails a guard that denies its benign event", deny.code === 1 && /FAIL\s+prose-guard\.mjs: deny on a benign PreToolUse event/.test(deny.out), deny.out);
+}
+
+// ── 13. `if` on a hook entry rides through init/uninstall verbatim, and is never invented ────────
+// The hooks reference (read 2026-09-12) documents `if` as a per-handler permission-rule filter,
+// tool events only, best-effort. No shipped entry carries one (see the table in bin/), so the
+// plumbing is proven on a COPY of the package whose settings.example.json has one.
+{
+  const copy = scratchDir("agr-if");
+  for (const d of ["bin", "hooks", "templates"]) cpSync(join(ROOT, d), join(copy, d), { recursive: true });
+  const ex = JSON.parse(readFileSync(join(ROOT, "settings.example.json"), "utf8"));
+  const bashGroup = ex.hooks.PreToolUse.find((g) => g.matcher === "Bash");
+  const pv = bashGroup.hooks.find((h) => entryFile(h) === "piped-verdict-guard.mjs");
+  pv.if = "Bash(git *)";
+  // an entry wired ahead of its file: must be skipped by name, with its `if` never reaching settings
+  bashGroup.hooks.push({ type: "command", command: "node", args: ["${CLAUDE_PROJECT_DIR}/.claude/hooks/ghost-guard.mjs"], timeout: 10, if: "Bash(rm *)" });
+  writeFileSync(join(copy, "settings.example.json"), JSON.stringify(ex, null, 2) + "\n");
+  const COPY_CLI = join(copy, "bin", "agent-guardrails.mjs");
+  const run = (args, cwd, env = {}) => {
+    const r = spawnSync(process.execPath, [COPY_CLI, ...args], { cwd, encoding: "utf8", env: { ...process.env, HOOK_CTX: "test", ...env } });
+    return { code: r.status, out: (r.stdout ?? "") + (r.stderr ?? "") };
+  };
+  const proj = scratchDir("agr-if-proj");
+  const r = run(["init"], proj);
+  check("if: init exits 0", r.code === 0, r.out);
+  const s = settingsOf(proj);
+  const got = hookEntries(s).find((h) => entryFile(h) === "piped-verdict-guard.mjs");
+  check("if: the entry's `if` round-trips verbatim into settings.json", got && got.if === "Bash(git *)", JSON.stringify(got));
+  check("if: no other entry gained an `if`", hookEntries(s).filter((h) => "if" in h).length === 1, "");
+  check("if: the entry keeps its other fields (timeout) beside `if`", got && got.timeout === 10 && got.type === "command", JSON.stringify(got));
+  check("if: an unshipped entry is skipped by name…", /skip\s+PreToolUse\(Bash\) → ghost-guard\.mjs/.test(r.out), r.out);
+  check("if: …and its `if` never reaches settings.json", !hookEntries(s).some((h) => entryFile(h) === "ghost-guard.mjs"), "");
+  const before = readFileSync(join(proj, ".claude", "settings.json"), "utf8");
+  const again = run(["init"], proj);
+  check("if: second init is idempotent with an `if` present (identity is command+args, not `if`)", again.code === 0 && readFileSync(join(proj, ".claude", "settings.json"), "utf8") === before, again.out);
+
+  // an operator's OWN `if` on a shipped entry survives init: not dropped, not duplicated, not widened
+  const own = scratchDir("agr-if-own");
+  mkdirSync(join(own, ".claude"), { recursive: true });
+  writeFileSync(join(own, ".claude", "settings.json"), JSON.stringify({
+    hooks: { PreToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command: "node", args: ["${CLAUDE_PROJECT_DIR}/.claude/hooks/fence-guard.mjs"], timeout: 10, if: "Bash(git *)" }] }] },
+  }, null, 2));
+  check("if: init over an operator's narrowed entry exits 0", run(["init"], own).code === 0, "");
+  const fences = hookEntries(settingsOf(own)).filter((h) => entryFile(h) === "fence-guard.mjs");
+  check("if: the operator's narrowed fence entry is kept, once, with its `if`", fences.length === 1 && fences[0].if === "Bash(git *)", JSON.stringify(fences));
+
+  // --user rewrites the path and keeps the `if`
+  const home = scratchDir("agr-if-home");
+  const u = run(["init", "--user"], proj, { HOME: home, USERPROFILE: home });
+  check("if: --user init exits 0", u.code === 0, u.out);
+  let us = null;
+  try { us = JSON.parse(readFileSync(join(home, ".claude", "settings.json"), "utf8")); } catch {}
+  const ug = us && hookEntries(us).find((h) => entryFile(h) === "piped-verdict-guard.mjs");
+  check("if: --user keeps the `if` while rewriting the path to an absolute one", ug && ug.if === "Bash(git *)" && !ug.args[0].includes("${CLAUDE_PROJECT_DIR}"), JSON.stringify(ug));
+
+  // uninstall removes the entry regardless of its `if`
+  const un = run(["uninstall"], proj);
+  check("if: uninstall removes an entry that carries an `if`", un.code === 0 && !existsSync(join(proj, ".claude", "hooks", "piped-verdict-guard.mjs")) && !JSON.stringify(settingsOf(proj)).includes("piped-verdict-guard"), un.out);
 }
 
 // ── 8. usage ─────────────────────────────────────────────────────────────────────────────────────

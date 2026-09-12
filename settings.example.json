@@ -1,5 +1,5 @@
 {
-  "$comment": "Drop this `hooks` block into .claude/settings.json (project) or ~/.claude/settings.json (user). Paths assume the hooks live in .claude/hooks/ of the project; ${CLAUDE_PROJECT_DIR} is expanded by Claude Code.",
+  "$comment": "Drop this `hooks` block into .claude/settings.json (project) or ~/.claude/settings.json (user). Paths assume the hooks live in .claude/hooks/ of the project; ${CLAUDE_PROJECT_DIR} is expanded by Claude Code. An entry may carry an `if` (permission-rule filter, tool events only); `init` merges it verbatim and never adds or strips one \u2014 see the `if` table in bin/agent-guardrails.mjs for why no shipped Bash guard carries one. PreCompact has no matcher here so both `auto` and `manual` compactions write the handoff.",
   "hooks": {
     "PreToolUse": [
       {
@@ -44,6 +44,22 @@
               "${CLAUDE_PROJECT_DIR}/.claude/hooks/root-cause-guard.mjs"
             ],
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/.claude/hooks/secret-write-guard.mjs"
+            ],
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/.claude/hooks/config-tamper-guard.mjs"
+            ],
+            "timeout": 10
           }
         ]
       },
@@ -55,6 +71,22 @@
             "command": "node",
             "args": [
               "${CLAUDE_PROJECT_DIR}/.claude/hooks/scope-guard.mjs"
+            ],
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/.claude/hooks/secret-write-guard.mjs"
+            ],
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/.claude/hooks/config-tamper-guard.mjs"
             ],
             "timeout": 10
           }
@@ -93,6 +125,28 @@
               "${CLAUDE_PROJECT_DIR}/.claude/hooks/goal-guard.mjs"
             ],
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/.claude/hooks/config-tamper-guard.mjs"
+            ],
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/.claude/hooks/precompact-handoff.mjs"
+            ],
+            "timeout": 15
           }
         ]
       }

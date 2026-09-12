@@ -18,6 +18,7 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  rmdirSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
@@ -67,11 +68,20 @@ function targetDir(flags) {
   return flags.has("--user") ? join(homedir(), ".claude") : join(process.cwd(), ".claude");
 }
 
-/** The shippable hooks: every hooks/*.mjs that is not a test. Helpers (_*.mjs) ship too. */
+/**
+ * The shippable files, as paths relative to hooks/: every hooks/*.mjs that is not a test, the helpers
+ * (_*.mjs), and the data files a hook loads beside itself (hooks/rules/*.json). ⚠ A hook that ships
+ * without its data file fails OPEN at the install site — secret-write-guard did exactly that in
+ * `doctor` on a fresh install until the rules directory rode along.
+ */
 function packagedHookFiles() {
-  return readdirSync(PKG_HOOKS)
-    .filter((f) => f.endsWith(".mjs") && !f.endsWith(".test.mjs"))
-    .sort();
+  const top = readdirSync(PKG_HOOKS)
+    .filter((f) => f.endsWith(".mjs") && !f.endsWith(".test.mjs"));
+  const rulesDir = join(PKG_HOOKS, "rules");
+  const rules = existsSync(rulesDir)
+    ? readdirSync(rulesDir).filter((f) => f.endsWith(".json")).map((f) => `rules/${f}`)
+    : [];
+  return [...top, ...rules].sort();
 }
 
 /** Guards only: the hooks that are registered in settings (helpers are imported, never run). */
@@ -90,24 +100,99 @@ function readJson(path) {
  * The hooks block from settings.example.json, with each hook's path rewritten for the target.
  * Project installs keep ${CLAUDE_PROJECT_DIR}; a --user install has no project dir, so the args
  * point at the absolute ~/.claude/hooks path.
+ *
+ * Entries are copied VERBATIM apart from the path: a `timeout`, an `if`, or any field the reference
+ * adds later, rides through untouched. An entry whose hook file does not ship in hooks/ is SKIPPED
+ * and named (settings.example.json may wire a hook ahead of the file landing; a settings.json that
+ * points at a file `init` never copied is exactly what `doctor` flags as "missing").
+ * @returns {{block: object, skipped: string[]}}
  */
 function exampleHooksFor(hooksDir, isUser) {
   const block = readJson(EXAMPLE).hooks;
-  if (!isUser) return block;
+  const shipped = new Set(packagedHookFiles());
+  const skipped = [];
   const rewrite = (s) =>
     typeof s === "string" && s.startsWith(PROJECT_PREFIX)
       ? join(hooksDir, s.slice(PROJECT_PREFIX.length))
       : s;
-  for (const groups of Object.values(block))
-    for (const g of groups)
-      for (const h of g.hooks) if (Array.isArray(h.args)) h.args = h.args.map(rewrite);
-  return block;
+  for (const [event, groups] of Object.entries(block)) {
+    for (const g of groups) {
+      g.hooks = g.hooks.filter((h) => {
+        const file = hookBasename(h);
+        if (file && !shipped.has(file)) {
+          skipped.push(`${event}${g.matcher ? `(${g.matcher})` : ""} → ${file}`);
+          return false;
+        }
+        return true;
+      });
+      if (isUser) for (const h of g.hooks) if (Array.isArray(h.args)) h.args = h.args.map(rewrite);
+    }
+    block[event] = groups.filter((g) => g.hooks.length > 0);
+    if (block[event].length === 0) delete block[event];
+  }
+  return { block, skipped };
 }
 
-/** Identity of a hook entry for de-duplication: command + args, nothing else. */
+/** The `<name>.mjs` an entry points at (first .mjs in command/args), or null for a foreign entry. */
+function hookBasename(h) {
+  const paths = [h.command, ...(Array.isArray(h.args) ? h.args : [])].filter((s) => typeof s === "string");
+  const p = paths.find((s) => s.endsWith(".mjs"));
+  return p ? p.split(/[\\/]/).pop() : null;
+}
+
+/**
+ * Identity of a hook entry for de-duplication: command + args, nothing else.
+ *
+ * `if` is deliberately NOT part of the identity. An operator who narrowed a shipped entry with an
+ * `if` of their own keeps it: init sees the same command+args, treats the entry as present, and
+ * neither re-adds a broader twin nor strips the filter. The reference (read 2026-09-12): "If you
+ * define the same handler in more than one settings file, it runs once."
+ */
 function hookKey(h) {
   return JSON.stringify([h.command ?? "", ...(Array.isArray(h.args) ? h.args : [])]);
 }
+
+// ── `if` filters on the shipped entries — decided per hook, none adopted ─────────────────────────
+// The hooks reference (https://code.claude.com/docs/en/hooks, read 2026-09-12) documents `if` on a
+// handler: "Permission rule syntax to filter when this hook runs, such as `"Bash(git *)"` or
+// `"Edit(*.ts)"`. The hook command only runs if the tool call matches the pattern. … Only evaluated
+// on tool events: PreToolUse, PostToolUse, PostToolUseFailure, PermissionRequest, and
+// PermissionDenied. On other events, a hook with `if` set never runs." It "holds exactly one
+// permission rule. There is no `&&`, `||`, or list syntax". Its Bash matching table says leading
+// `VAR=value` assignments are stripped and each `&&`/`;`/`|` subcommand and `$()` body is checked,
+// and "When Claude Code can't determine which commands the Bash input runs, it runs your hook
+// regardless of the pattern. Because the `if` filter is best-effort, use the permission system
+// rather than a hook to enforce a hard allow or deny."
+//
+// So `FOO=1 git push` and `npm test && git push` DO reach a `Bash(git *)` handler (the two cases the
+// brief feared are covered by the table). What `if` still cuts are the forms the permissions page
+// lists under "What a Bash rule doesn't match": `/usr/bin/git push`, `sh -c 'git push …'`,
+// `bash -lc "…"`. Every shipped Bash guard sees THROUGH those on purpose — that is the difference
+// between a guard and a permission rule — so any `if` narrower than `Bash(*)` is a filter the guard's
+// own matcher would have refused to accept. Per hook:
+//
+//   hook                 own match surface                              `if` that would be a superset?
+//   fence-guard          many heads (git push/merge to a protected      none: one rule per handler, no OR;
+//                        branch, recursive rm, IaC applies, k8s          a per-head split multiplies spawns
+//                        deletes, SQL, aws …) recursing into sh -c /     and still misses `/usr/bin/git`
+//                        eval / $()
+//   prose-guard          EVERY first word (is it a program at all?)      none narrower than Bash(*) exists
+//   runaway-guard        yes · cat /dev/urandom · seq · while true …,    none: `Bash(yes *)` needs a space
+//                        recursing into sh -c / (…) / $(…)               after `yes`, so bare `yes` skips it
+//   piped-verdict-guard  `git push|merge|rebase` piped into a filter,    `Bash(git *)` skips `/usr/bin/git
+//                        basenamed (`/usr/bin/git`), inside sh -c        push | tail` and `sh -c 'git push
+//                        bodies                                          | tail'` — both are must-fires
+//   root-cause-guard     `git commit` (with global opts) OR `<any
+//                        forge> mr|pr create` — two heads, one rule      none: no OR syntax
+//   scope-guard          Edit|MultiEdit|Write|NotebookEdit — every       none needed: the matcher already
+//   secret-write-guard   write is judged                                 selects the tools; a path `if`
+//   config-tamper-guard                                                  would exempt exactly the file
+//                                                                        a tamper renames to
+//
+// Conclusion: no shipped entry takes an `if`. The plumbing (verbatim copy, identity without `if`,
+// `--user` rewrite keeping it) is what init guarantees, so an operator who accepts the cut for a
+// private hook can add one and re-run init without losing it. The cost of not filtering is one Node
+// start per guard per Bash call (docs/BENCH.md); the cut above is the price a filter would charge.
 
 /**
  * Merge `incoming` (event → groups) into `settings.hooks` WITHOUT clobbering: existing events,
@@ -119,10 +204,15 @@ function mergeHooks(settings, incoming) {
   let added = 0;
   for (const [event, groups] of Object.entries(incoming)) {
     const existing = (settings.hooks[event] ??= []);
+    // ⚠ Presence is per MATCHER, not per event. A hook wired under both the `Bash` group and the
+    // `Edit|MultiEdit|Write|NotebookEdit` group of PreToolUse (secret-write-guard, config-tamper-guard)
+    // is the same command+args twice, and a per-event set dropped the second entry — so the guard
+    // never ran on edits while settings.json looked complete. Measured: 15 wired, 13 merged.
     const present = new Set();
-    for (const g of existing) for (const h of g.hooks ?? []) present.add(hookKey(h));
+    const slotKey = (matcher, h) => `${matcher ?? ""}\u0000${hookKey(h)}`;
+    for (const g of existing) for (const h of g.hooks ?? []) present.add(slotKey(g.matcher, h));
     for (const g of groups) {
-      const fresh = g.hooks.filter((h) => !present.has(hookKey(h)));
+      const fresh = g.hooks.filter((h) => !present.has(slotKey(g.matcher, h)));
       if (fresh.length === 0) continue;
       // Same matcher (both may be undefined, as on Stop) → extend that group; else append a group.
       let slot = existing.find((e) => (e.matcher ?? null) === (g.matcher ?? null));
@@ -133,7 +223,7 @@ function mergeHooks(settings, incoming) {
       slot.hooks ??= [];
       for (const h of fresh) {
         slot.hooks.push(h);
-        present.add(hookKey(h));
+        present.add(slotKey(g.matcher, h));
         added++;
       }
     }
@@ -168,7 +258,7 @@ function init(flags) {
       continue;
     }
     if (!dry) {
-      mkdirSync(hooksDir, { recursive: true });
+      mkdirSync(dirname(dst), { recursive: true });
       copyFileSync(src, dst);
     }
     say(`${existed ? "update" : "copy  "}  ${dst}`);
@@ -193,7 +283,9 @@ function init(flags) {
       return 1;
     }
   }
-  const added = mergeHooks(settings, exampleHooksFor(hooksDir, isUser));
+  const example = exampleHooksFor(hooksDir, isUser);
+  for (const sk of example.skipped) say(`skip    ${sk}  (wired in settings.example.json, but that hook does not ship in hooks/ yet)`);
+  const added = mergeHooks(settings, example.block);
   if (added === 0) {
     say(`settings already reference every hook: ${settingsPath}`);
   } else {
@@ -235,8 +327,13 @@ function bashEvent(command, sessionId) {
   return { ...baseEvent("PreToolUse", sessionId), tool_name: "Bash", tool_input: { command } };
 }
 
-/** Guards that answer Stop / SessionStart / Edit, not a Bash command. Everything else is a Bash guard. */
-const NOT_BASH_GUARDS = new Set(["ui-evidence-guard.mjs", "goal-guard.mjs", "scope-guard.mjs"]);
+/** Guards that answer Stop / SessionStart / Edit / PreCompact, not a Bash command. Everything else is a Bash guard. */
+const NOT_BASH_GUARDS = new Set([
+  "ui-evidence-guard.mjs",
+  "goal-guard.mjs",
+  "scope-guard.mjs",
+  "precompact-handoff.mjs",
+]);
 
 /** One known incident per shipped Bash guard — the must-fire case, verbatim from its test. */
 const INCIDENTS = {
@@ -244,6 +341,10 @@ const INCIDENTS = {
   "runaway-guard.mjs": "yes for sure",
   "prose-guard.mjs": "please run the tests",
   "piped-verdict-guard.mjs": "git push origin main 2>&1 | tail -2",
+  // The key is concatenated so this file never carries the shape a scanner would flag.
+  "secret-write-guard.mjs": "printf 'AWS_ACCESS_KEY_ID=" + "AKIA" + "J7Q2M4X9K1LP3ZRW\\n' > .env",
+  "config-tamper-guard.mjs": "sed -i 's/goal-guard/goal-guard.off/' .claude/settings.json",
+  // precompact-handoff.mjs has no incident: it never refuses, so "refuses its incident" cannot apply.
 };
 
 /** The benign event(s) a hook must allow — one of its OWN type, per hook. */
@@ -265,6 +366,13 @@ function benignEventsFor(file) {
         { ...baseEvent("Stop", sid), stop_hook_active: false, last_assistant_message: "still working on it" },
         { ...baseEvent("SessionStart", sid), source: "startup" },
       ];
+    case "precompact-handoff.mjs":
+      // Writes a handoff under HOOK_STATE_DIR/XDG state; doctor's run is tagged HOOK_CTX=test and
+      // the file it leaves is the same one a real compaction would overwrite.
+      return [{ ...baseEvent("PreCompact", sid), trigger: "manual", custom_instructions: null }];
+    // TODO(integrator): config-tamper-guard.mjs is also wired on SessionStart — add a
+    // `{ ...baseEvent("SessionStart", sid), source: "startup" }` case alongside its Bash event once
+    // the hook lands, so doctor exercises both of its event types.
     default:
       return [bashEvent("node --version", sid)];
   }
@@ -431,7 +539,7 @@ function uninstall(flags) {
       console.error(`refusing to touch ${settingsPath}: it is not valid JSON (${e.message}). Nothing was written.`);
       return 1;
     }
-    removed = unmergeHooks(settings, shipped.filter((f) => !f.startsWith("_")));
+    removed = unmergeHooks(settings, shipped.filter((f) => f.endsWith(".mjs") && !f.startsWith("_")));
     if (removed === 0) say(`settings reference none of the shipped hooks: ${settingsPath}`);
     else {
       const backup = `${settingsPath}.bak-${timestamp()}`;
@@ -457,6 +565,12 @@ function uninstall(flags) {
     if (!dry) rmSync(dst);
     say(`delete  ${dst}`);
     deleted++;
+  }
+  // A data directory init created (hooks/rules/) is removed once it is empty; a directory the
+  // operator put their own files in is left alone.
+  for (const sub of new Set(shipped.filter((f) => f.includes("/")).map((f) => dirname(f)))) {
+    const d = join(hooksDir, sub);
+    if (!dry && existsSync(d) && readdirSync(d).length === 0) rmdirSync(d);
   }
 
   say(
@@ -648,7 +762,7 @@ async function report(flags) {
     x[r.ctx in x ? r.ctx : "unknown"]++;
   }
   for (const f of log.fires) row(f.hook).fires++;
-  for (const g of packagedHookFiles().filter((f) => !f.startsWith("_"))) row(g);
+  for (const g of packagedHookFiles().filter((f) => f.endsWith(".mjs") && !f.startsWith("_"))) row(g);
 
   const names = [...rows.keys()].sort();
   const w = Math.max(4, ...names.map((n) => n.length));

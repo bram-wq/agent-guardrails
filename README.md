@@ -6,7 +6,7 @@ looping, filling a disk, or pressing the one button that cannot be un-pressed.**
 [![guard tests](https://github.com/bram-wq/agent-guardrails/actions/workflows/test.yml/badge.svg)](https://github.com/bram-wq/agent-guardrails/actions/workflows/test.yml)
 ![node](https://img.shields.io/badge/node-%E2%89%A520-brightgreen) ![deps](https://img.shields.io/badge/dependencies-0-blue) ![license](https://img.shields.io/badge/license-MIT-lightgrey)
 
-Eight production hooks, 1,154 test cases, zero dependencies, one-command install and uninstall.
+Ten hooks (eight lifted from production, two built from a survey of the field), 1,154 test cases, zero dependencies, one-command install and uninstall.
 Every guard has a must-fire test (the incident, verbatim) and a must-not-fire test (its legitimate
 twin), because a guard that blocks real work gets switched off within a week. The test total on this
 page is printed by the runner, not typed.
@@ -48,6 +48,9 @@ npx github:bram-wq/agent-guardrails#v0.2.0 uninstall  # removes only what init a
 | `piped-verdict-guard` | PreToolUse · Bash | `git push` / `merge` / `rebase` piped into a pure output filter with no `${PIPESTATUS[0]}` read in the next statement and no `pipefail` in force: the shape that reports a blocked push as a clean one. Scope was narrowed against a ~6,000-command transcript corpus to the three verbs where a masked verdict caused damage. | `CLAUDE_HOOKS_QUIET=1` |
 | `scope-guard` | PreToolUse · Edit/Write/MultiEdit | An edit outside the path globs a task declared in `.agent-scope` (opt-in; `deny` beats `allow`). Resolves symlinks, fails closed on a malformed scope file, refuses a scope edit that widens itself, and compiles globs linearly so a deep path cannot time the hook out. | `.agent-scope` |
 | `ui-evidence-guard` | Stop | A turn that claims UI work is done while the branch diff touches user-visible files and `.evidence/` holds no real screenshot (image magic bytes, > 5 KB) newer than the newest UI commit. Anchors to content author-time so rebases and branch splits cannot manufacture or destroy evidence. | `UI_EVIDENCE_PATHS` (regex of your UI paths) |
+| `secret-write-guard` | PreToolUse · Write/Edit/MultiEdit/NotebookEdit/Bash | A write whose **text** carries a credential: 14 vendor shapes (AWS, GitHub, GitLab, Slack, Stripe, Google, PEM private keys, npm, Anthropic, OpenAI, Twilio, SendGrid, Discord, JWT) plus `key/secret/token/password = <high-entropy value>`. For Bash only the parts that write: heredoc bodies, `> file`, `tee`, `sed -i`, `sh -c` strings. The reason names the rule id and file:line, never the value. Placeholders, git SHAs, UUIDs, fixtures and read-only commands pass. Rules are a gitleaks-shaped JSON file you can extend. | `SECRET_GUARD_ALLOW_PATHS`, `SECRET_GUARD_RULES`, `CLAUDE_HOOKS_QUIET=1` |
+| `config-tamper-guard` | PreToolUse · Write/Edit/MultiEdit/NotebookEdit/Bash · SessionStart | Any write to the agent's own control surface: `.claude/settings*.json`, `.claude/hooks/`, `.agent-scope`, `.mcp.json`, `.git/hooks/`, `core.hooksPath`, the managed-settings directories. Sees redirects, `tee`, `sed -i`, `cp`/`mv`/`ln` destinations, `chmod`, `sh -c`, `$(…)`. Reads, hook invocations and `.claude/skills|commands|agents` pass. SessionStart prints a fingerprint of the surface so tampering shows as a changed digest. | `CONFIG_GUARD_ALLOW=1` in the environment that launched Claude Code (a prefix inside the command is stripped and does not count). Not lifted by `CLAUDE_HOOKS_QUIET`. |
+| `precompact-handoff` | PreCompact | Nothing. Before a compaction it writes a durable handoff (goal, DONE command, proven or not, the last ten refusals, timestamp) under the state dir, so the summary cannot lose them; goal-guard's SessionStart re-injects the goal after the compaction. Never blocks. | `HOOK_STATE_DIR`, `HOOK_FIRE_LOG` |
 | `root-cause-guard` | PreToolUse · Bash (warn only) | A commit or PR message that quotes a runtime error and claims a fix while naming no stack frame, artifact offset, or query count. Warns through `additionalContext`, the channel Claude actually reads; never blocks. | — |
 
 Every guard: decides in milliseconds from the event alone, fails **open** on its own bugs (a guard
@@ -56,10 +59,40 @@ large to scan, prints a reason that carries the fix, and records that it ran and
 Per-guard fields and stdout shapes, verified against the hooks reference on 2026-09-12:
 [`docs/COMPAT.md`](docs/COMPAT.md). Cost per call, measured: [`docs/BENCH.md`](docs/BENCH.md).
 
+**The layer above.** `managed-settings.example.json` is a permissions deny floor for the fence class plus
+`disableBypassPermissionsMode`, using only keys the settings reference confirms; put it in the managed
+settings path and the hooks become the second layer, not the only one.
+
 **What these do not do.** They run as your user, from files the agent can edit. They stop an agent
 from making a class of mistakes silently; they do not stop an agent that wants to bypass them. A
 PreToolUse hook that times out allows the call. The full list of accepted bypasses, with reasons:
 [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md).
+
+## Why this and not another hook set
+
+Read on 2026-09-12; star counts from that day. The others are good; pick by what you need.
+
+| If you need | Use | Because |
+|---|---|---|
+| The same command analyzer across Codex, Cursor, Gemini, Copilot and nine more harnesses | [claude-code-safety-net](https://github.com/kenryu42/claude-code-safety-net) (1.5k stars) | Breadth is its design goal. This repo targets Claude Code's hook contract only, and says so. |
+| A plugin-marketplace bundle of everyday hooks (dangerous commands, protect tests, config guard) | [claude-code-hooks](https://github.com/karanb192/claude-code-hooks) (509 stars) | A wider grab bag. This repo ships fewer guards, each with the incident that produced it. |
+| A gitleaks engine with output redaction and CI integration | [agent-guard](https://github.com/JeongJaeSoon/agent-guard) | It wraps the real gitleaks binary. `secret-write-guard` here vendors 15 rules as JSON with no binary and no dependency. |
+| A real boundary against an agent that wants out | [`@anthropic-ai/sandbox-runtime`](https://github.com/anthropic-experimental/sandbox-runtime) (5.2k stars), managed settings, a separate identity | Hooks run as your user from files the agent can edit. Anthropic's own layering is managed settings, then deny rules, then a sandbox, then hooks. `managed-settings.example.json` here is the layer above. |
+| A guard that judges with a model (`prompt` or `agent` hook types, TDD Guard, NeMo) | Not here, by design | A model verdict cannot have a must-fire test, its 30-second timeout fails open, and every false positive on a busy day is an interrupt. Every guard here decides in milliseconds from the event alone. |
+
+What this repo has that the others do not, as far as the survey found:
+
+- **Stop-side guards.** `goal-guard` refuses "done" until the stopping command has exited 0.
+  `ui-evidence-guard` refuses "done" on a UI branch with no rendered screenshot. The other sets guard
+  what the agent *runs*; these two guard what it *claims*.
+- **The incident, verbatim, as the must-fire test, and its legitimate twin as the must-not-fire test.**
+  1,154 cases across ten guards, printed by the runner. Mutation-tested by hand: each guard's deny branch
+  was removed and the suite went red.
+- **Fire logs with denominators.** `report` prints runs, fires and rate per hook per project, so a guard
+  is pruned on a count, never on an opinion. `piped-verdict-guard` was narrowed from every piped command
+  to three git verbs on ~6,000 logged commands.
+- **A production origin.** These ran on a plane landing 76 merges a day with no human in the merge loop.
+  The numbers are dated and the method is in the write-up.
 
 ### Start with goal-guard
 
@@ -104,7 +137,7 @@ system as measured on 2026-09-12; they describe the origin, not this repo:
 
 | | |
 |---|---|
-| Guard hooks in production | 50 (48 with paired tests); these eight are the most portable |
+| Guard hooks in production | 50 (48 with paired tests); eight of the ten here are the most portable of them |
 | CI gate scripts | 340, each with its own test |
 | Merges landed with no human in the merge loop | 2,276 |
 | Merged changes per day | 76 on average, 125 on the peak day, at about USD 1.30 of CI each, attributed per merge |

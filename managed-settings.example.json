@@ -1,0 +1,37 @@
+{
+  "_comment": "Managed-settings FLOOR for the fence class. Drop into managed-settings.json (system dir), an MDM policy, or the claude.ai console — never a user/project file, which cannot lock these. Every key below was verified on https://code.claude.com/docs/en/settings-reference (read 2026-09-12; the page carries no visible revision date — the server's Last-Modified was Sat, 12 Sep 2026 07:49 GMT). `permissions.deny`: 'List the tool uses Claude Code blocks' — array of permission rule strings, scope Any file. `permissions.disableBypassPermissionsMode`: 'Prevent anyone from entering bypassPermissions mode … rejects the --dangerously-skip-permissions flag' — type: the string \"disable\"; it lives UNDER permissions, not at the top level. `allowManagedPermissionRulesOnly`: 'Make managed settings the only settings source of permission rules' — boolean, scope Managed; with it on, allow/ask/deny rules in user, project, local and --settings files are ignored, so every allow rule an operator needs must also live here. WHAT THIS IS NOT: the same page says 'A Bash deny rule matches the command as Claude writes it, so Bash(curl *) doesn't stop /usr/bin/curl or sh -c curl …' — these rules stop the invocation Claude usually produces and are not a security boundary around the program; the PreToolUse guards in hooks/ (fence-guard sees through sh -c, eval, $(), wrappers and paths) are the second layer, and sandboxing is the third. Deny rules apply when ANY subcommand matches, including past a leading VAR=value assignment and inside $() or a for-loop body (permissions page, read the same day).",
+  "permissions": {
+    "deny": [
+      "Bash(git push origin main*)",
+      "Bash(git push origin master*)",
+      "Bash(git push --force*)",
+      "Bash(git push -f *)",
+      "Bash(git push --force-with-lease*)",
+      "Bash(git push --delete *)",
+      "Bash(git branch -D main*)",
+      "Bash(git branch -D master*)",
+      "Bash(rm -rf /*)",
+      "Bash(rm -fr /*)",
+      "Bash(rm -rf ~*)",
+      "Bash(rm -rf $HOME*)",
+      "Bash(terraform apply*)",
+      "Bash(terraform destroy*)",
+      "Bash(pulumi up*)",
+      "Bash(pulumi destroy*)",
+      "Bash(kubectl delete*)",
+      "Bash(kubectl apply*)",
+      "Bash(aws ecs update-service*)",
+      "Bash(aws s3 rm *)",
+      "Bash(aws s3 sync * --delete*)",
+      "Bash(aws secretsmanager put-secret-value*)",
+      "Bash(aws ssm put-parameter*)",
+      "Bash(gh pr merge*)",
+      "Bash(glab mr merge*)",
+      "Bash(sudo *)",
+      "Bash(mkfs*)",
+      "Bash(dd if=*)"
+    ],
+    "disableBypassPermissionsMode": "disable"
+  },
+  "allowManagedPermissionRulesOnly": true
+}

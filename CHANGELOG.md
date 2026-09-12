@@ -3,6 +3,51 @@
 All notable changes to this project are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org).
 
+## [Unreleased] — 0.3.0
+
+Driven by a survey of the guardrail landscape (deterministic hook sets, sandboxes, policy files,
+model-based validators) against this repo's threat model. Everything adopted is deterministic and
+ships with paired tests; everything model-based was rejected, with the reasons in the README.
+
+### Added
+
+- `secret-write-guard`: refuses a Write/Edit/MultiEdit/NotebookEdit, or the writing parts of a Bash
+  command, whose text carries a credential. 15 gitleaks-shaped rules in `hooks/rules/secrets.json`
+  (extend or replace with `SECRET_GUARD_RULES`), Shannon-entropy floor on the generic rule, placeholder
+  and fixture exemptions. The reason names the rule id and file:line, never the value. 143 cases, with
+  an in-suite mutation that blanks one rule and proves its incident flips to allowed.
+- `config-tamper-guard`: refuses any write to the agent's own control surface (settings, hooks,
+  `.agent-scope`, `.mcp.json`, git hooks, `core.hooksPath`, managed-settings directories) through every
+  Bash write shape; a SessionStart fingerprint makes tampering visible next start. Closes the two
+  highest rows of `docs/THREAT-MODEL.md` for the accidental case; the same-user limit remains and is
+  documented. 80 paired cases plus hatch, reason and fingerprint checks.
+
+- `precompact-handoff`: a PreCompact hook that writes a durable handoff (goal, DONE command, proven or
+  not, last ten refusals) before the context is summarised. The hooks reference gives PreCompact no
+  context-injection channel, so the goal returns through goal-guard's SessionStart on `source:
+  "compact"`; the header quotes the reference. 48 cases.
+- `managed-settings.example.json`: a permissions deny floor for the fence class, verified key by key
+  against the settings reference, documented as the layer above the hooks.
+- README "Why this and not another hook set": a grounded comparison with the other hook sets and with
+  the sandbox, and the reasons no model-based guard is included.
+- `init` and `uninstall` ship and remove `hooks/rules/*.json` alongside the hooks; `doctor` on a fresh
+  install proved a hook without its data file fails open at the install site.
+
+### Changed
+
+- `init` keeps an `if` field on any hook entry an operator narrowed, and never adds one itself: the
+  permissions page lists `/usr/bin/git` and `sh -c` as shapes a Bash rule does not match, and every
+  shipped Bash guard sees through those on purpose. The per-hook reasoning sits beside
+  `exampleHooksFor` in the CLI.
+
+### Fixed
+
+- `init` deduplicated hook entries by command per event, so a guard wired under both the Bash and the
+  Edit matchers of PreToolUse lost its second entry and silently never ran on edits. Presence is now
+  keyed by matcher too. `init` also skips, and names, an example entry whose hook file does not ship.
+- The repo carried a tracked fire log under `hooks/.local/` written by a test run with `HOME` pointed
+  at `hooks/`; removed and ignored.
+
 ## [0.2.0] — 2026-09-12
 
 Driven by a three-lens review (first-time user, partner evaluator, adversarial tester) and a check of

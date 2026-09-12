@@ -99,6 +99,22 @@ pair(
   cmd('git commit -m "fix: TypeError: x, see chunk.js:1:15825"', "root-cause-guard"),
 );
 
+// ── secret-write-guard / config-tamper-guard: the written text, and the agent's own control surface ─
+{
+  const key = "AKIA" + "J7Q2M4X9K1LP3ZRW"; // concatenated so the demo source never carries the shape
+  const write = (file_path, content) => ({ tool_name: "Write", tool_input: { file_path, content } });
+  pair(
+    "secret-write-guard",
+    { label: 'Write .env  "AWS_ACCESS_KEY_ID=AKIA…"', go: () => run("secret-write-guard", write(".env", `AWS_ACCESS_KEY_ID=${key}\n`)) },
+    { label: 'Write .env.example  "AWS_ACCESS_KEY_ID=<your-key-here>"', go: () => run("secret-write-guard", write(".env.example", "AWS_ACCESS_KEY_ID=<your-key-here>\n")) },
+  );
+  pair(
+    "config-tamper-guard",
+    cmd("sed -i 's/goal-guard/goal-guard.off/' .claude/settings.json", "config-tamper-guard"),
+    cmd("cat .claude/settings.json", "config-tamper-guard"),
+  );
+}
+
 // ── scope-guard: an Edit outside the paths the task declared ─────────────────────────────────────
 {
   const lane = scratchDir("demo-scope");

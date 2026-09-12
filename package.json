@@ -1,6 +1,6 @@
 {
   "name": "agent-guardrails",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "description": "Deterministic PreToolUse/Stop guard hooks for Claude Code, each with a must-fire and a must-not-fire test. Zero dependencies.",
   "license": "MIT",
@@ -35,7 +35,8 @@
     "assets/",
     "CHANGELOG.md",
     "SECURITY.md",
-    "templates/"
+    "templates/",
+    "managed-settings.example.json"
   ],
   "engines": {
     "node": ">=20"
