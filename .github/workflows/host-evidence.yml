@@ -1,0 +1,48 @@
+name: Trusted actual-host evidence
+on:
+  workflow_dispatch:
+    inputs:
+      host:
+        type: choice
+        options: [claude, codex]
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  authorize:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refuse non-main execution
+        env:
+          REF: ${{ github.ref }}
+        run: test "$REF" = refs/heads/main
+  host:
+    needs: authorize
+    runs-on: [self-hosted, agent-guardrails-host-proof]
+    environment: host-validation
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Explain the single-use trust prerequisite
+        run: echo 'This job requires a fresh, manually reviewed fixture for EACH dispatch. Reusing an earlier fixture is refused, not retried.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Run the reviewed single-use fixture
+        env:
+          HOST: ${{ inputs.host }}
+          PROJECT: ${{ vars.HOST_PROOF_PROJECT }}
+          HOST_PROOF_EXPECT_VERSION: ${{ vars.HOST_PROOF_EXPECT_VERSION }}
+          RECEIPTS: ${{ runner.temp }}/host-proof-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          test -n "$PROJECT"
+          node scripts/host-run.mjs run "$HOST" "$PROJECT" "$RECEIPTS"
+      - name: Preserve the sanitized receipt, never raw host output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: host-evidence-${{ inputs.host }}-${{ github.sha }}
+          path: ${{ runner.temp }}/host-proof-${{ github.run_id }}-${{ github.run_attempt }}/*
+          if-no-files-found: error
+          retention-days: 30

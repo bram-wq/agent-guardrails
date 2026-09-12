@@ -15,6 +15,31 @@ current suite and case counts; published counts go stale as controls are added.
 
 ![node demo.mjs: each guard fed the incident and its legitimate twin](assets/demo.svg)
 
+## Reproducible evidence, not just promises
+
+The source checkout includes a credential-free adversarial evaluation:
+
+```sh
+node scripts/evaluate.mjs --out artifacts/evaluation
+```
+
+Corpus `bash-blocking-v1` enumerates **12 attacks and 12 benign controls across six
+Bash guards**, plus six source mutations that suppress denial. Results name each
+miss, unknown outcome and surviving mutant; they include source and corpus hashes.
+Commands are passed as data, never executed. This curated regression corpus is
+not a population estimate of security effectiveness. GitHub Actions runs it on
+PRs, main pushes and weekly, preserving JSON receipts and SHA256 sidecars.
+
+Actual-host evidence is separate: the retained [Claude Code 2.1.269 receipt](evidence/2026-09-12/claude-host.json)
+observed one benign allow and one protected-file denial through instrumented
+installed wiring, with matching file outcomes. The [Codex 0.149.0 attempt](evidence/2026-09-12/codex-host.json)
+observed no hook events and is **not established**, not a pass. Neither receipt
+claims all-guard coverage. See [host reproduction and automation](docs/HOST-PROOF.md).
+
+Independent human adoption is **not yet established**. The
+[trial protocol](docs/ADOPTION-TRIAL.md) accepts failed installs too; our own
+installs and CI runs do not count as independent users.
+
 ## Try it in 60 seconds, no clone
 
 ```bash
