@@ -351,6 +351,11 @@ PAIR("multi-line: second line writes", bash("ls\nprintf x > .git/config"),
 check("classifyPath: settings class", classifyPath(".claude/settings.json", REPO)?.cls, "settings");
 check("classifyPath: hooks class", classifyPath(".claude/hooks/x.mjs", REPO)?.cls, "hooks");
 check("classifyPath: managed class on the Windows path", classifyPath("C:\\Program Files\\ClaudeCode\\managed-settings.json", REPO)?.cls, "managed");
+// A Windows HOME spells with backslashes, so `~/.claude.json` expands to a Windows SHAPE; the
+// global-config check must still apply to it (it did not: three CI cases on the matrix).
+check("classifyPath: ~/.claude.json with a Windows home is global-config", classifyPath("~/.claude.json", REPO, "C:\\Users\\Me")?.cls, "global-config");
+check("classifyPath: $HOME/.claude.json with a Windows home is global-config", classifyPath("$HOME/.claude.json", REPO, "C:\\Users\\Me")?.cls, "global-config");
+check("classifyPath: ~/notes/.claude.json with a Windows home is NOT global-config", classifyPath("~/notes/.claude.json", REPO, "C:\\Users\\Me"), null);
 check("classifyPath: null for a skill", classifyPath(".claude/skills/x/SKILL.md", REPO), null);
 check("classifyPath: a flag is not a path", classifyPath("-i", REPO), null);
 check("decideBash: git-hooks kind for core.hooksPath", decideBash("git config core.hooksPath x", REPO)?.cls, "git-hooks");

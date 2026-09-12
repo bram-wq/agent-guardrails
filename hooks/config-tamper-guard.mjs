@@ -183,27 +183,34 @@ export function classifyPath(word, cwd, home = homedir()) {
   let w = String(word ?? "").trim();
   if (!w) return null;
   w = expandHome(w, home);
-  if (WIN_SHAPE.test(w)) {
-    const cls = classifyShape(w.split("\\").join("/"), true);
-    return cls ? { cls, path: w } : null;
-  }
   const win32 = process.platform === "win32";
-  const spelled = posix.normalize(isAbsolute(w) ? w : posix.join(cwd.split("\\").join("/"), w));
-  const homeFolded = win32 ? home.toLowerCase() : home;
+  const winShape = WIN_SHAPE.test(w);
+  // Folded = case-insensitive: a Windows-shaped path on any host, or any path on a win32 host.
+  const folded = winShape || win32;
+  const slash = (p) => p.split("\\").join("/");
+  const homeFolded = slash(folded ? home.toLowerCase() : home);
   // ~/.claude.json is the one control file whose class depends on WHERE it sits.
   const isGlobal = (p) => {
-    const q = win32 ? p.toLowerCase() : p;
-    return basename(q) === ".claude.json" && dirname(q) === homeFolded.split("\\").join("/");
+    const q = folded ? p.toLowerCase() : p;
+    return basename(q) === ".claude.json" && dirname(q) === homeFolded;
   };
-  let cls = classifyShape(spelled, win32) ?? (isGlobal(spelled) ? "global-config" : null);
-  if (!cls) {
+  // ⚠ THE WINDOWS-SHAPED BRANCH USED TO SKIP BOTH THE GLOBAL-CONFIG CHECK AND CANONICALISATION.
+  // `~/.claude.json` expands to `C:\Users\me/.claude.json` on a Windows host — a Windows shape — so it
+  // was judged by string shape alone and allowed; a symlinked `.claude` under a drive path was never
+  // realpath'd. Three must-fire cases went red on the CI matrix while Linux and macOS were green.
+  const spelled = winShape
+    ? posix.normalize(slash(w))
+    : posix.normalize(isAbsolute(w) ? w : posix.join(slash(cwd), w));
+  let cls = classifyShape(spelled, folded) ?? (isGlobal(spelled) ? "global-config" : null);
+  // Canonicalise only when this host can resolve the path: a Windows shape on a posix host cannot be.
+  if (!cls && (win32 || !winShape)) {
     let canon;
     try {
-      canon = canonicalPath(isAbsolute(w) ? w : join(cwd, w)).split("\\").join("/");
+      canon = slash(canonicalPath(isAbsolute(w) ? w : join(cwd, w)));
     } catch {
       canon = null;
     }
-    if (canon) cls = classifyShape(canon, win32) ?? (isGlobal(canon) ? "global-config" : null);
+    if (canon) cls = classifyShape(canon, folded) ?? (isGlobal(canon) ? "global-config" : null);
   }
   return cls ? { cls, path: w } : null;
 }
