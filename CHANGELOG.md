@@ -27,6 +27,8 @@ every stdin/stdout assumption against the current Claude Code hooks reference.
 
 ### Fixed
 
+- goal-guard: the off-tree check canonicalises both the worktree and the argument through the deepest existing ancestor (`realpathSync.native`), so a symlinked tmpdir (macOS `/var` → `/private/var`) or a Windows 8.3 short name (`RUNNER~1`) no longer refuses a verification that lives inside the tree. Paired symlink cases added; the matrix caught it, Linux alone would not have.
+
 - `root-cause-guard` wrote its warning to stderr and exited 0. Per the hooks reference that reaches the
   debug log only; Claude never saw it. It now emits `additionalContext` and a `systemMessage`. Also gated
   on `tool_name === "Bash"`, and reads `-F <file>` / `--body-file` messages.

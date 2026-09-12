@@ -279,11 +279,41 @@ export const ESCAPE_FLAG_RE =
   /^(?:--prefix|--root|--config|-C|-c|--dir|-r|--require|--import|--loader|--experimental-loader)(?:=|$)/;
 const DOTDOT_SEGMENT_RE = /(?:^|[\\/])\.\.(?:[\\/]|$)/;
 const ABSOLUTE_RE = /^(?:[\\/]|[A-Za-z]:[\\/])/;
-/** Is `p` (already absolute) inside `top`? Both spellings are tried, so a symlinked tmpdir still counts. */
+/**
+ * The canonical spelling of a path that MAY NOT EXIST YET: the deepest existing ancestor is
+ * realpath'd (`.native`, so Windows 8.3 names like `RUNNER~1` expand and the drive letter's case is
+ * fixed) and the missing tail is re-joined. On Windows the result is case-folded, because the
+ * filesystem is.
+ *
+ * ⚠ THIS EXISTS BECAUSE `realpathSync(p)` THROWS ON A FILE THAT IS NOT THERE. The first version
+ * tried `[resolve(p), realpathSync(p)]` and fell back to the resolved spelling alone; on macOS the
+ * temp dir is `/var` → `/private/var`, so a not-yet-written `<tree>/exit0.mjs` compared its `/var`
+ * spelling against the tree's `/private/var` one and was refused as off-tree. On Windows the
+ * agent's own tmpdir came back as `RUNNER~1` and never matched `runneradmin`. Linux CI was green
+ * both times, which is exactly why the matrix runs three platforms.
+ */
+export function canonicalPath(p) {
+  let head = resolve(p);
+  const tail = [];
+  for (;;) {
+    try {
+      head = realpathSync.native(head);
+      break;
+    } catch {
+      const parent = dirname(head);
+      if (parent === head) break; // hit the root without finding anything real; keep the spelling
+      tail.unshift(basename(head));
+      head = parent;
+    }
+  }
+  const out = tail.length ? join(head, ...tail) : head;
+  return process.platform === "win32" ? out.toLowerCase() : out;
+}
+/** Is `p` (already absolute) inside `top`? Both sides are canonicalised, so a symlinked tmpdir or an 8.3 short name still counts. */
 function insideTree(p, top) {
-  const candidates = [resolve(p)];
-  try { candidates.push(realpathSync(p)); } catch { /* may not exist yet; the resolved spelling still decides */ }
-  return candidates.some((c) => c === top || c.startsWith(top.endsWith(sep) ? top : top + sep));
+  const c = canonicalPath(p);
+  const t = canonicalPath(top);
+  return c === t || c.startsWith(t.endsWith(sep) ? t : t + sep);
 }
 /**
  * Every argument of one segment, checked against the worktree. Returns the offending token, or null.

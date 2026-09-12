@@ -3988,3 +3988,136 @@
 2026-09-12T07:33:18.504Z	run	prose-guard.mjs	live	showcase-820b3eef
 2026-09-12T07:33:18.506Z	fire	prose-guard.mjs	deny	oversize-event	live	showcase-820b3eef
 2026-09-12T07:33:18.547Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:49.331Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:49.333Z	fire	prose-guard.mjs	deny	not-a-command	live	showcase-820b3eef
+2026-09-12T07:44:49.378Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:49.380Z	fire	prose-guard.mjs	deny	not-a-command	live	showcase-820b3eef
+2026-09-12T07:44:49.425Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:49.426Z	fire	prose-guard.mjs	deny	not-a-command	live	showcase-820b3eef
+2026-09-12T07:44:49.467Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:49.508Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:49.549Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:49.591Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:49.635Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:49.679Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:49.718Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:49.758Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:49.800Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:49.840Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:49.882Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:49.924Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:49.965Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:50.010Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:50.054Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:50.096Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:50.139Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:50.182Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:50.223Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:50.263Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:50.305Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:50.346Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:50.388Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:50.429Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:50.472Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:50.511Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:50.553Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:50.555Z	fire	prose-guard.mjs	deny	not-a-command	live	showcase-820b3eef
+2026-09-12T07:44:50.597Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:50.600Z	fire	prose-guard.mjs	deny	not-a-command	live	showcase-820b3eef
+2026-09-12T07:44:50.646Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:50.687Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:50.772Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:50.813Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:50.853Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:50.893Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:50.935Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:50.978Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:51.020Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:51.063Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:51.104Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:51.144Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:51.184Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:51.226Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:51.267Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:51.309Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:51.354Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:51.395Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:51.438Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:51.479Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:51.520Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:51.563Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:51.606Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:51.650Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:51.694Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:51.737Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:51.778Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:51.819Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:51.821Z	fire	prose-guard.mjs	deny	not-a-command	live	showcase-820b3eef
+2026-09-12T07:44:51.864Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:51.866Z	fire	prose-guard.mjs	deny	not-a-command	live	showcase-820b3eef
+2026-09-12T07:44:51.910Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:51.912Z	fire	prose-guard.mjs	deny	not-a-command	live	showcase-820b3eef
+2026-09-12T07:44:51.956Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:51.998Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:52.000Z	fire	prose-guard.mjs	deny	not-a-command	live	showcase-820b3eef
+2026-09-12T07:44:52.043Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:52.087Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:52.127Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:52.129Z	fire	prose-guard.mjs	deny	not-a-command	live	showcase-820b3eef
+2026-09-12T07:44:52.169Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:52.171Z	fire	prose-guard.mjs	deny	not-a-command	live	showcase-820b3eef
+2026-09-12T07:44:52.212Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:52.214Z	fire	prose-guard.mjs	deny	not-a-command	live	showcase-820b3eef
+2026-09-12T07:44:52.254Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:52.256Z	fire	prose-guard.mjs	deny	not-a-command	live	showcase-820b3eef
+2026-09-12T07:44:52.299Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:52.302Z	fire	prose-guard.mjs	deny	not-a-command	live	showcase-820b3eef
+2026-09-12T07:44:52.346Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:52.348Z	fire	prose-guard.mjs	deny	not-a-command	live	showcase-820b3eef
+2026-09-12T07:44:52.390Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:52.392Z	fire	prose-guard.mjs	deny	not-a-command	live	showcase-820b3eef
+2026-09-12T07:44:52.437Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:52.439Z	fire	prose-guard.mjs	deny	not-a-command	live	showcase-820b3eef
+2026-09-12T07:44:52.481Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:52.483Z	fire	prose-guard.mjs	deny	not-a-command	live	showcase-820b3eef
+2026-09-12T07:44:52.529Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:52.531Z	fire	prose-guard.mjs	deny	not-a-command	live	showcase-820b3eef
+2026-09-12T07:44:52.579Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:52.581Z	fire	prose-guard.mjs	deny	not-a-command	live	showcase-820b3eef
+2026-09-12T07:44:52.627Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:52.629Z	fire	prose-guard.mjs	deny	not-a-command	live	showcase-820b3eef
+2026-09-12T07:44:52.672Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:52.674Z	fire	prose-guard.mjs	deny	not-a-command	live	showcase-820b3eef
+2026-09-12T07:44:52.718Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:52.720Z	fire	prose-guard.mjs	deny	not-a-command	live	showcase-820b3eef
+2026-09-12T07:44:52.762Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:52.764Z	fire	prose-guard.mjs	deny	not-a-command	live	showcase-820b3eef
+2026-09-12T07:44:52.808Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:52.810Z	fire	prose-guard.mjs	deny	not-a-command	live	showcase-820b3eef
+2026-09-12T07:44:52.858Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:52.860Z	fire	prose-guard.mjs	deny	not-a-command	live	showcase-820b3eef
+2026-09-12T07:44:52.905Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:52.907Z	fire	prose-guard.mjs	deny	not-a-command	live	showcase-820b3eef
+2026-09-12T07:44:52.953Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:52.955Z	fire	prose-guard.mjs	deny	not-a-command	live	showcase-820b3eef
+2026-09-12T07:44:53.009Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:53.061Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:53.107Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:53.152Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:53.197Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:53.241Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:53.289Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:53.338Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:53.340Z	fire	prose-guard.mjs	allow	exempted	live	showcase-820b3eef
+2026-09-12T07:44:53.383Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:53.385Z	fire	prose-guard.mjs	deny	not-a-command	live	showcase-820b3eef
+2026-09-12T07:44:53.432Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:53.434Z	fire	prose-guard.mjs	deny	not-a-command	live	showcase-820b3eef
+2026-09-12T07:44:53.481Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:53.483Z	fire	prose-guard.mjs	deny	not-a-command	live	showcase-820b3eef
+2026-09-12T07:44:53.526Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:53.569Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:53.571Z	fire	prose-guard.mjs	deny	not-a-command	live	showcase-820b3eef
+2026-09-12T07:44:53.621Z	run	prose-guard.mjs	live	showcase-820b3eef
+2026-09-12T07:44:53.623Z	fire	prose-guard.mjs	deny	oversize-event	live	showcase-820b3eef
+2026-09-12T07:44:53.670Z	run	prose-guard.mjs	live	showcase-820b3eef

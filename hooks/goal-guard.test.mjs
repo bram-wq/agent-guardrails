@@ -18,7 +18,7 @@
 // refused at --set and at --prove, and an ordinary verification command is accepted.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { writeFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
+import { writeFileSync, readFileSync, existsSync, mkdirSync, symlinkSync } from "node:fs";
 import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { scratchDir } from "./_scratch-dir.mjs";
@@ -668,6 +668,29 @@ const doneOk = (dir) => exitScript(dir, 0);
     "npm run test:e2e -- --retries 2",
   ]) {
     check(`ALLOW the twin still arms: \`${cmd.replace(tree, "<tree>")}\``, armed(cmd), "accepted");
+  }
+}
+
+{
+  // The tree reached through a SYMLINKED spelling (macOS: /var → /private/var; any `ln -s`d
+  // checkout). `git rev-parse` answers with the real spelling, the agent types the linked one, and a
+  // verification file that does not exist yet has no realpath of its own. Both spellings are one
+  // tree, so the goal must arm — and a path that only LOOKS inside via the link must still be
+  // refused when it resolves elsewhere. Windows runners cannot create symlinks unprivileged, so the
+  // case is measured on POSIX and the 8.3-name half of the same fix rides the CI matrix.
+  if (process.platform !== "win32") {
+    const real = fresh();
+    const link = join(fresh(), "link");
+    symlinkSync(real, link, "dir");
+    const linked = join(link, "wt");
+    mkdirSync(linked);
+    const arm = (cmd) => run(linked, ["--set", "g", "--done", cmd]).status === 0 ? "accepted" : "refused";
+    check("ALLOW a not-yet-written verification file named through the symlinked spelling of the tree", arm(`node ${join(linked, "exit0.mjs")}`), "accepted");
+    check("ALLOW the same file named through the real spelling", arm(`node ${join(real, "wt", "exit0.mjs")}`), "accepted");
+    const elsewhere = fresh();
+    const escape = join(link, "wt", "escape");
+    symlinkSync(elsewhere, escape, "dir");
+    check("FIRE  ★ a link INSIDE the tree that resolves outside it is still off-tree", arm(`node ${join(escape, "check.mjs")}`), "refused");
   }
 }
 
