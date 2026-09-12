@@ -4,7 +4,7 @@
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync, symlinkSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { execFileSync } from "node:child_process";
 
 const HOOK = join(dirname(fileURLToPath(import.meta.url)), "scope-guard.mjs");
@@ -242,7 +242,7 @@ const ev = (d, tool, p, extra = {}) => ({
   const ms = execFileSync(
     process.execPath,
     ["--input-type=module", "-e",
-      `import { matchesAny } from ${JSON.stringify(HOOK)};
+      `import { matchesAny } from ${JSON.stringify(pathToFileURL(HOOK).href)}; // a file URL: a bare Windows drive path is not an ESM specifier
        const t = process.hrtime.bigint();
        const hit = matchesAny(${JSON.stringify(deep)}, [${JSON.stringify(stars)}]);
        console.log(JSON.stringify({ hit, ms: Number(process.hrtime.bigint() - t) / 1e6 }));`],
