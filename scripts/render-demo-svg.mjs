@@ -53,7 +53,7 @@ function colorize(line) {
   if (/^Every guard/.test(line)) return span(line, COLORS.green, "bold");
   if (/^\d+ case/.test(line)) return span(line, COLORS.red, "bold");
   if (/^\s+reason:/.test(line)) return span(line, COLORS.dim);
-  const m = line.match(/^(\s+)([✔✘])(\s+)(must-(?:not-)?fire)(\s+)(.*?)(\s+→\s+)(REFUSED|allowed)(.*)$/);
+  const m = line.match(/^(\s+)([✔✘])(\s+)(must-(?:not-)?fire)(\s+)(.*?)(\s+→\s+)(REFUSED|WARNED|allowed)(.*)$/);
   if (!m) return span(line, COLORS.text);
   const [, i1, mark, i2, label, i3, cmd, arrow, verdict, rest] = m;
   return (
@@ -62,7 +62,7 @@ function colorize(line) {
     span(i2 + label + i3, COLORS.dim) +
     span(cmd, COLORS.text) +
     span(arrow, COLORS.dim) +
-    span(verdict, verdict === "REFUSED" ? COLORS.red : COLORS.green, "bold") +
+    span(verdict, verdict === "REFUSED" ? COLORS.red : verdict === "WARNED" ? COLORS.yellow : COLORS.green, "bold") +
     span(rest, COLORS.dim)
   );
 }

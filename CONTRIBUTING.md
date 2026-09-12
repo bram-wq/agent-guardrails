@@ -71,6 +71,17 @@ on disk. See `SECURITY.md`.
 - Add a row to the hooks table in `README.md` and a line to `CHANGELOG.md`.
 - Run `node scripts/render-demo-svg.mjs` if you added a case to `demo.mjs`.
 
+## Docs contract
+
+[`docs/COMPAT.md`](docs/COMPAT.md) is the record of what each hook reads from stdin, what it
+writes to stdout, which Claude Code contract sentence that relies on, and the date that sentence
+was last verified against the reference. A PR that touches a hook's stdin or stdout shape — a new
+field read, a changed decision JSON, a new exit code, a new size cap or its fail direction — updates
+COMPAT.md in the same commit. A reviewer checks the table row against the diff; a row that still
+describes the old shape blocks the PR. The full authoring contract is in
+[`docs/writing-a-guard.md`](docs/writing-a-guard.md); the bypasses a change must not widen are in
+[`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md).
+
 ## PR checklist
 
 - [ ] The incident is quoted verbatim in the must-fire test (or in the PR if it cannot be in a test)
@@ -81,3 +92,4 @@ on disk. See `SECURITY.md`.
 - [ ] `node test.mjs`, `node demo.mjs` and `node bin/agent-guardrails.mjs init --dry-run` pass locally
 - [ ] No new dependency, no shell in `package.json`, paths built with `node:path`
 - [ ] `settings.example.json`, README table and CHANGELOG updated
+- [ ] `docs/COMPAT.md` row updated if the hook's stdin fields, stdout shape, exit code or size cap changed

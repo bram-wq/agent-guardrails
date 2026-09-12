@@ -99,7 +99,7 @@ changes everything downstream. Then write the must-not-fire test for every guard
 because the false positive is what will get your guard deleted. Then measure fire counts, and prune on
 counts, never on opinions.
 
-The repo has the seven guards, their 337 paired tests, a one-command installer, a demo that runs in a
+The repo has the seven guards, their 377 paired tests, a one-command installer, a demo that runs in a
 minute, and the doctrine on one page.
 
 *Bramantya Farid Prakoso runs product and engineering at an ed-tech non-profit in Southeast Asia and

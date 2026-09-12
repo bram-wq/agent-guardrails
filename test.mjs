@@ -16,13 +16,22 @@ for (const dir of ["hooks", "bin"]) {
 
 const started = Date.now();
 let passed = 0;
+let cases = 0;
+// Suites print one line per case: `✓ …` from the shared helper, `ok - …` from the ui-evidence suite.
+// The total is COUNTED here so the number the README quotes is computed, never typed.
+const CASE_LINE = /^\s*(?:✓|ok - )/;
 for (const s of suites) {
   console.log(`\n=== ${s}`);
-  const r = spawnSync(process.execPath, [join(ROOT, s)], { stdio: "inherit", cwd: ROOT });
+  const r = spawnSync(process.execPath, [join(ROOT, s)], { encoding: "utf8", cwd: ROOT });
+  process.stdout.write(r.stdout ?? "");
+  process.stderr.write(r.stderr ?? "");
+  cases += (r.stdout ?? "").split("\n").filter((l) => CASE_LINE.test(l)).length;
   if (r.status !== 0) {
     console.log(`\nFAIL ${s} (exit ${r.status ?? r.signal}) — ${passed} of ${suites.length} suite(s) passed before it.`);
     process.exit(1);
   }
   passed++;
 }
-console.log(`\n${passed}/${suites.length} suites passed in ${((Date.now() - started) / 1000).toFixed(1)}s.`);
+console.log(
+  `\n${passed}/${suites.length} suites passed, ${cases} cases, in ${((Date.now() - started) / 1000).toFixed(1)}s.`,
+);

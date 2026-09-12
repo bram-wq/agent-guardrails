@@ -48,10 +48,12 @@
 // worse than none — it produces the reassurance without the check. So this one is deliberately narrow
 // in two independent ways, and EITHER is enough to keep it silent:
 //   • IT IS OPT-IN. With no goal set, it never fires. Setting a goal is the act that arms it.
-//   • THE CLAIM DETECTOR IS LINE-ANCHORED. It fires on a line that OPENS with `result:` (a
-//     machine-read completion token), `DONE`, `Done.` or `verified complete` — the shapes a
-//     completion is ASSERTED in — and stays silent through "not done", "what would done mean",
-//     `DONE WHEN: <cmd>` (this guard's own goal format) or the word result in a sentence.
+//   • THE CLAIM DETECTOR IS LINE-ANCHORED. It fires on a line that OPENS (after markdown
+//     decoration) with `result:` (a machine-read completion token), `DONE`, a claim-only sentence
+//     (`Done.`, `Finished.`, `Implemented and merged.`, `The task is done.`) or `verified complete`
+//     — the shapes a completion is ASSERTED in — and stays silent through "not done", "done with
+//     the first half", `DONE WHEN: <cmd>` (this guard's own goal format), `DONE-ish` or the word
+//     result in a sentence.
 //     ⚠ A claim line INSIDE A FENCED CODE BLOCK STILL FIRES. That is deliberate and stated here
 //     because an earlier version of this comment claimed the opposite while the code did no fence
 //     tracking — documented behaviour that does not exist is worse than a known gap, since the next
@@ -77,7 +79,7 @@ import {
 } from "node:fs";
 import { spawnSync, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { join, dirname, basename, resolve } from "node:path";
+import { join, dirname, basename, resolve, sep } from "node:path";
 import { recordFire, recordInvocation } from "./_fire-log.mjs";
 
 recordInvocation("goal-guard.mjs");
@@ -207,8 +209,15 @@ export function denyDoneRe(env = process.env) {
 // ⚠ `npm run <anything>` IS TOO WIDE. `npm run deploy` is a destructive action wearing an
 // allowlisted head, and no regex can see through a script name to what package.json makes it do. So
 // the script name itself is constrained to verification NAMESPACES. The default set is the one most
-// repositories converge on; `GOAL_GUARD_ALLOW_NPM_RE` (a regex source, anchored for you) EXTENDS it
-// for a repo whose verification scripts live elsewhere.
+// repositories converge on; `GOAL_GUARD_ALLOW_NPM_SCRIPTS` (a comma/space-separated LIST of literal
+// script names) EXTENDS it for a repo whose verification scripts live elsewhere.
+// ⚠ A LIST, NOT A REGEX. The extension used to be a regex source, and `GOAL_GUARD_ALLOW_NPM_RE='.*'`
+// made `npm run deploy` armable — the environment could WIDEN the allowlist to everything, while the
+// denylist beside it was env-immutable. A floor that one shell variable can remove is a sentence in
+// a hook's clothes. So each entry must be a literal name matching NPM_SCRIPT_NAME_RE; anything else
+// (a `.`, a `*`, a `|`) is dropped LOUDLY on stderr, and DENIED_NPM_SCRIPT_RE is applied AFTER the
+// extension, so a listed `deploy` is still refused. `GOAL_GUARD_ALLOW_NPM_RE` is read as the same
+// literal list for compatibility — its regex days are over.
 // ⚠ AND TOO NARROW COSTS SILENTLY. An earlier shape accepted one colon segment for `test:` while
 // accepting any depth for `gate:`, so a repo's own headline verification commands were refused. A
 // guard that refuses the commands it should be recommending does not get tightened by its users; it
@@ -218,24 +227,78 @@ export function denyDoneRe(env = process.env) {
 // shape rather than by an exception list.
 export const ALLOWED_NPM_SCRIPT_RE =
   /^(?:gates?:[\w:.-]+|ci:[\w:.-]+|check:[\w:.-]+|test(?::[\w:.-]+)?|typecheck(?::[\w:.-]+)?|lint(?::[\w:.-]+)?|verify(?::[\w:.-]+)?)$/;
-export function allowedNpmScriptRe(env = process.env) {
-  const extra = env.GOAL_GUARD_ALLOW_NPM_RE;
-  if (!extra) return ALLOWED_NPM_SCRIPT_RE;
-  try {
-    return new RegExp(`^(?:${ALLOWED_NPM_SCRIPT_RE.source.slice(1, -1)}|(?:${extra}))$`);
-  } catch {
-    process.stderr.write(
-      `goal-guard: GOAL_GUARD_ALLOW_NPM_RE is not a valid regex; using the default allowlist only.\n`,
-    );
-    return ALLOWED_NPM_SCRIPT_RE;
+/** The only shape an extension entry may take: a literal npm script name. */
+export const NPM_SCRIPT_NAME_RE = /^[\w:.-]+$/;
+/**
+ * Script names no extension can admit. Small and enumerated — it is the env-immutable floor under
+ * the extension, not a claim that every other name is read-only (the namespace allowlist is that).
+ */
+export const DENIED_NPM_SCRIPT_RE = /^(?:deploy|release|publish)(?:[:.-]|$)/i;
+/** The literal script names the environment adds, validated one by one. */
+export function extraNpmScripts(env = process.env) {
+  const raw = [env.GOAL_GUARD_ALLOW_NPM_SCRIPTS, env.GOAL_GUARD_ALLOW_NPM_RE].filter(Boolean).join(",");
+  if (!raw) return new Set();
+  const names = new Set();
+  for (const entry of raw.split(/[\s,]+/).filter(Boolean)) {
+    if (!NPM_SCRIPT_NAME_RE.test(entry)) {
+      // "dropped" and "admitted" must not look the same, so the drop is said out loud.
+      process.stderr.write(
+        `goal-guard: GOAL_GUARD_ALLOW_NPM_SCRIPTS entry \`${entry}\` is not a literal script name (a list, not a regex) — ignored.\n`,
+      );
+      continue;
+    }
+    // A denied name is still LISTED here (so the note is printed once, where the list is read); the
+    // refusal itself happens in npmScriptAllowed, AFTER the extension, and in exactly one place.
+    if (DENIED_NPM_SCRIPT_RE.test(entry))
+      process.stderr.write(
+        `goal-guard: GOAL_GUARD_ALLOW_NPM_SCRIPTS cannot admit \`${entry}\` — it is on the env-immutable denylist.\n`,
+      );
+    names.add(entry);
   }
+  return names;
+}
+/** Is `name` an admissible `npm run` script: a default namespace or a validated literal extension? */
+export function npmScriptAllowed(name, env = process.env) {
+  if (DENIED_NPM_SCRIPT_RE.test(name)) return false; // the floor, applied after any extension
+  return ALLOWED_NPM_SCRIPT_RE.test(name) || extraNpmScripts(env).has(name);
 }
 // RESIDUAL, stated honestly: `node <file>.mjs` is allowlisted, so a file written first can still
 // contain anything. Inside the repo that is strictly weaker than arbitrary shell — the file is on
-// disk, in the diff, and passed through the Write hooks. It is WEAKER STILL out of repo: an absolute
-// path to /tmp gets none of that visibility. Not zero, and no comment should imply it is.
+// disk, in the diff, and passed through the Write hooks. OUT of the repo it had none of that
+// visibility, and an adversarial probe showed the head did not even have to be `node`:
+// `npm test --prefix /tmp/evilpkg` armed, and `--prove` ran /tmp code and recorded exit=0; so did
+// `npm run lint --prefix /tmp/x`, `npx vitest --root /tmp/x` and `npx vitest --config /tmp/evil.mjs`.
+// Every one of those is an allowlisted head steered OFF the worktree by a flag or a path. So
+// ESCAPE_FLAG_RE refuses the flags that relocate what a verification runs (a prefix, a root, a config
+// file, a preload), and every argument that is an absolute path OUTSIDE the worktree or carries a
+// `..` segment is refused too. What remains is code that sits inside the tree the goal is keyed by.
 export const ALLOWED_DONE_SEGMENT_RE =
   /^(?:npm\s+(?:run\s+[\w:.-]+|test)(?:\s+--)?|node\s+(?:[A-Za-z]:)?[\w@~./\\-]+\.(?:mjs|js|cjs)|npx\s+vitest|npm\s+exec\s+vitest)(?:\s+(?:[A-Za-z]:)?[\w@~:./=,\\-]+)*$/;
+/** Flags that point an allowlisted head at code outside the worktree, or preload code into it. */
+export const ESCAPE_FLAG_RE =
+  /^(?:--prefix|--root|--config|-C|-c|--dir|-r|--require|--import|--loader|--experimental-loader)(?:=|$)/;
+const DOTDOT_SEGMENT_RE = /(?:^|[\\/])\.\.(?:[\\/]|$)/;
+const ABSOLUTE_RE = /^(?:[\\/]|[A-Za-z]:[\\/])/;
+/** Is `p` (already absolute) inside `top`? Both spellings are tried, so a symlinked tmpdir still counts. */
+function insideTree(p, top) {
+  const candidates = [resolve(p)];
+  try { candidates.push(realpathSync(p)); } catch { /* may not exist yet; the resolved spelling still decides */ }
+  return candidates.some((c) => c === top || c.startsWith(top.endsWith(sep) ? top : top + sep));
+}
+/**
+ * Every argument of one segment, checked against the worktree. Returns the offending token, or null.
+ * A `--flag=value` splits at the first `=` so the value is judged as a path too.
+ */
+export function offTreeArgument(seg, top) {
+  const tokens = String(seg).trim().split(/\s+/).slice(1); // the head is judged by the allowlist
+  for (const tok of tokens) {
+    if (ESCAPE_FLAG_RE.test(tok)) return tok;
+    const value = tok.startsWith("-") && tok.includes("=") ? tok.slice(tok.indexOf("=") + 1) : tok;
+    if (DOTDOT_SEGMENT_RE.test(value)) return tok;
+    if (ABSOLUTE_RE.test(value) && !insideTree(value, top)) return tok;
+  }
+  return null;
+}
 
 // Shell metacharacters are refused outright: `&&` is the ONLY composition allowed, because it is the
 // one this code implements itself (segments run sequentially, stopping at the first non-zero). A `;`,
@@ -253,9 +316,28 @@ export const SHELL_METACHAR_RE =
  * Words that describe ACTIVITY or SENTIMENT rather than a state. Nothing can fail them, so an
  * objective built on one cannot be finished — only abandoned. Kept deliberately short: every entry
  * has appeared in a real goal that then drifted.
+ *
+ * ⚠ THE WORD MUST BE THE PREDICATE, NOT MERELY PRESENT. The first version was a substring word list,
+ * and it refused `the handle is red`, `support 3 locales` and `support: tests pass` — three
+ * perfectly falsifiable deltas, because "handle" and "support" appeared somewhere in them. A
+ * validator that refuses concrete goals teaches its users to word goals AROUND it, which is worse
+ * than no validator. So the match is positional: the objective OPENS with a bare activity verb
+ * (`improve …`, `refactor …`, `clean up …`), or ENDS on a judgement (`… properly`, `… better`,
+ * `… flawless`), or is the `make <it> better/work` shape. Whole words only.
  */
-const UNFALSIFIABLE_RE =
-  /\b(improve|refactor|handle|support|robust|properly|clean\s*up|optimi[sz]e|better|modernn?i[sz]e|world[- ]class|seamless|streamline|finish\s+off|make\s+it\s+work)\b/i;
+const ACTIVITY_OPENER_RE =
+  /^(?:(?:please|just|now|to|we|i|let'?s|let us)\s+)*(improve|refactor|optimi[sz]e|modern(?:is|iz)e|streamline|polish|tidy(?:\s+up)?|clean\s*up|finish\s+off|make\s+it\s+work)\b/i;
+const JUDGEMENT_ENDER_RE =
+  /\b(properly|better|robust(?:ly)?|seamless(?:ly)?|world[- ]class|flawless(?:ly)?|nice(?:r|ly)|cleaner|great|perfect(?:ly)?)[.!]?$/i;
+const MAKE_IT_RE =
+  /\bmake\s+(?:\S+\s+){0,3}?(better|robust|seamless|flawless|work|nicer|cleaner|perfect)\b/i;
+
+/** The vague predicate an objective turns on, or null when it reads as a falsifiable delta. */
+export function vaguePredicate(text) {
+  const t = String(text ?? "").trim();
+  const m = ACTIVITY_OPENER_RE.exec(t) ?? JUDGEMENT_ENDER_RE.exec(t) ?? MAKE_IT_RE.exec(t);
+  return m ? m[1] : null;
+}
 
 /**
  * An objective must be a DELTA, not an activity or a capability.
@@ -280,13 +362,13 @@ export function validateObjective(goal, baseline, invariant) {
   const g = String(goal ?? "").trim();
   const b = String(baseline ?? "").trim();
   if (!g) return { ok: false, why: "the objective is empty" };
-  const m = g.match(UNFALSIFIABLE_RE);
+  const m = vaguePredicate(g);
   if (m)
     return {
       ok: false,
-      why: `the objective turns on "${m[0]}", which names activity, not a state — nothing can fail it`,
+      why: `the objective turns on "${m}", which names activity, not a state — nothing can fail it`,
     };
-  if (b && UNFALSIFIABLE_RE.test(b))
+  if (b && vaguePredicate(b))
     return {
       ok: false,
       why: "the --baseline reads as a judgement, not a measurement — give the number, status or output you observed",
@@ -299,7 +381,7 @@ export function validateObjective(goal, baseline, invariant) {
  * May this string be executed by --prove?
  * @returns {{ok:boolean, why:string}}
  */
-export function validateDoneCommand(cmd, env = process.env) {
+export function validateDoneCommand(cmd, env = process.env, cwd = process.cwd()) {
   const raw = String(cmd ?? "").trim();
   if (!raw) return { ok: false, why: "the stopping command is empty" };
   if (denyDoneRe(env).test(raw))
@@ -312,7 +394,9 @@ export function validateDoneCommand(cmd, env = process.env) {
       ok: false,
       why: "it contains a shell metacharacter; only `&&` composition is allowed, so an allowlisted command cannot tow an arbitrary tail",
     };
-  const npmAllowed = allowedNpmScriptRe(env);
+  // The tree the goal is keyed by is the tree a stopping command may run code from. Silent lookup:
+  // the "not inside a git worktree" notice belongs to state keying, which the CLI already prints.
+  const top = worktreeKey(cwd, () => {}).toplevel;
   const segments = raw.split("&&").map((s) => s.trim());
   for (const seg of segments) {
     if (!ALLOWED_DONE_SEGMENT_RE.test(seg))
@@ -329,27 +413,65 @@ export function validateDoneCommand(cmd, env = process.env) {
         why: `inline evaluation (\`-e\`/\`-p\`) is arbitrary code, not a verification: \`${seg}\``,
       };
     const npmRun = /^npm\s+run\s+([\w:.-]+)/.exec(seg);
-    if (npmRun && !npmAllowed.test(npmRun[1]))
+    if (npmRun && !npmScriptAllowed(npmRun[1], env))
       return {
         ok: false,
-        why: `\`${npmRun[1]}\` is not a verification script — allowed namespaces are test* lint* typecheck* check:* verify:* gate:* gates:* ci:* (extend with GOAL_GUARD_ALLOW_NPM_RE)`,
+        why: `\`${npmRun[1]}\` is not a verification script — allowed namespaces are test* lint* typecheck* check:* verify:* gate:* gates:* ci:* (extend with GOAL_GUARD_ALLOW_NPM_SCRIPTS, a list of literal names)`,
+      };
+    const off = offTreeArgument(seg, top);
+    if (off)
+      return {
+        ok: false,
+        why: `\`${off}\` points the verification OUTSIDE the worktree (${top}) — a prefix, root, config, preload, \`..\` or off-tree absolute path would run code no other guard has seen: \`${seg}\``,
       };
   }
   return { ok: true, why: `${segments.length} verification segment(s)` };
 }
 
 // ── THE CLAIM DETECTOR ───────────────────────────────────────────────────────────────────────────
-// Line-anchored. `result:` is the machine-read completion token (any case); the prose shapes are
-// case-pinned so that "done with the first half, moving on" and "DONE WHEN: <cmd>" — this guard's
-// own goal format, which an agent echoes at the start of a task — stay silent.
+// Line-anchored. `result:` is the machine-read completion token (any case). The prose shapes are a
+// SENTENCE that is nothing but a claim word: `Done.`, `done.`, `Done!`, `Finished.`, `Complete.`,
+// `Implemented and merged.`, `DONE — …`, `DONE: …`, or `The task is done.` — and `DONE` opening a
+// line in capitals fires on its own. Silent through `done with the first half`, `Done with the
+// schema; …` (a sub-step), `DONE WHEN: <cmd>` (this guard's own goal format) and `DONE-ish`.
+//
+// ⚠ MARKDOWN DECORATION IS STRIPPED FIRST. An adversarial probe showed `**Done.**`, `✅ Done.`,
+// `- Done.` and `## Done` all sailed past a detector anchored at column 0, while `DONE-ish` was
+// blocked. Each line loses its leading `#`, `*`, `-`, `>`, `+`, list numbers, emoji and whitespace
+// before it is judged, so the claim is read as a reader reads it, not as the bytes sit.
 export const RESULT_CLAIM_RE = /^[ \t]*result:/im;
-export const PROSE_CLAIM_RE =
-  /^[ \t]*(?:DONE\b(?![ \t]+WHEN\b)|Done\.|[Vv]erified complete\b)/m;
+const CLAIM_WORDS = "done|finished|completed?|implemented|shipped|merged|landed|resolved";
+/** `DONE` in capitals opening a line is a verdict on its own (`DONE — landed`, `DONE: passes`). Case-pinned. */
+export const DONE_LINE_RE = /^DONE\b(?![ \t]+WHEN\b)(?!-)/m;
+/** A line that is a claim SENTENCE, any case, after decoration is stripped. */
+export const PROSE_CLAIM_RE = new RegExp(
+  "^(?:" +
+    // A sentence that is only claim words: `Done.`, `done.`, `Finished. …`, `Implemented and merged.`
+    `(?:${CLAIM_WORDS})\\b(?!-)(?:\\s+(?:and|&)\\s+(?:${CLAIM_WORDS})\\b(?!-))*\\s*(?:[.!:]|—|–|-\\s|$)` +
+    // `The task is done.` / `Work is complete.` / `It's implemented and merged.`
+    `|(?:the\\s+|this\\s+|that\\s+)?(?:task|work|job|feature|fix|change|implementation|migration|hook|guard|pr|mr|it|everything|all)(?:'s|\\s+(?:is|are|was|were))\\s+(?:now\\s+|all\\s+|fully\\s+)?(?:${CLAIM_WORDS}|complete)\\b(?!-)(?:\\s+(?:and|&)\\s+(?:${CLAIM_WORDS}|complete)\\b)*\\s*[.!]?\\s*$` +
+    "|verified complete\\b" +
+    ")",
+  "im",
+);
+/** Leading markdown/list/emoji decoration a line may carry before its first word. */
+const LINE_DECORATION_RE =
+  /^[ \t]*(?:(?:[#>*_~+•·-]+|\d+[.)]|[\u2600-\u27BF\u{1F000}-\u{1FAFF}\uFE0F\u200D])[ \t]*)*/u;
+export function stripDecoration(text) {
+  return String(text)
+    .split("\n")
+    .map((l) => l.replace(LINE_DECORATION_RE, ""))
+    .join("\n");
+}
 
-/** @param {string} text an assistant message @returns {boolean} */
+/** @param {unknown} text an assistant message @returns {boolean} */
 export function claimsCompletion(text) {
-  const s = String(text ?? "");
-  return RESULT_CLAIM_RE.test(s) || PROSE_CLAIM_RE.test(s);
+  // A non-string payload (an array of content blocks, null, a number) carries no line to read; it
+  // is not stringified into one, because `[object Object]` and `Done.,foo` are not claims either.
+  if (typeof text !== "string") return false;
+  if (RESULT_CLAIM_RE.test(text)) return true;
+  const plain = stripDecoration(text);
+  return DONE_LINE_RE.test(plain) || PROSE_CLAIM_RE.test(plain);
 }
 
 // ── GOAL RECORD ──────────────────────────────────────────────────────────────────────────────────
@@ -527,13 +649,14 @@ export function cli(argv, env = process.env, out = process.stdout, cwd = process
       say("      --done      '<the command that proves it>'");
       return 1;
     }
-    const valid = validateDoneCommand(done, env);
+    const valid = validateDoneCommand(done, env, cwd);
     if (!valid.ok) {
       say(`goal-guard: REFUSED — ${valid.why}\n    ${done}`);
       say("  A stopping command must be a read-only VERIFICATION, and --prove runs it from inside a");
       say("  hook where no other guard sees it, so only recognised shapes are accepted:");
       say("      npm run <test|lint|typecheck|check:*|verify:*|gate:*|ci:*> · npm test · node <file>.mjs · npx vitest");
-      say("  Compose with && only. No shell metacharacters, no inline -e/-p evaluation.");
+      say("  Compose with && only. No shell metacharacters, no inline -e/-p evaluation, no --prefix/--root/");
+      say("  --config/--require/--import/--loader, and every path stays inside this worktree (no `..`).");
       return 1;
     }
     writeGoal(goal, done, env, { baseline, invariant }, cwd);
@@ -573,7 +696,7 @@ export function cli(argv, env = process.env, out = process.stdout, cwd = process
     // Re-validate at execution, not only at --set: the goal file is plain JSON on disk and anything
     // that can write it can put an unvalidated command there. A control applied only at the writing
     // door is not a control on the executing door.
-    const v = validateDoneCommand(goal.doneCommand, env);
+    const v = validateDoneCommand(goal.doneCommand, env, cwd);
     if (!v.ok) {
       say(
         `goal-guard: REFUSED — ${v.why}\n    ${goal.doneCommand}\n` +
@@ -725,7 +848,7 @@ export function main(argv = process.argv.slice(2), env = process.env) {
         "",
         "If the goal genuinely changed, re-arm it rather than claiming the old one:",
         "    node .claude/hooks/goal-guard.mjs --set '<objective>' --done '<command>'",
-        "If this turn is not a completion of that goal, drop the claim line (`result:` / `DONE` / `Done.` / `verified complete`) and say what remains.",
+        "If this turn is not a completion of that goal, drop the claim line (`result:` / `DONE` / `Done.` / `Finished.` / `Implemented and merged.` / `verified complete`) and say what remains.",
       ].join("\n"),
     );
     return 0;
@@ -739,5 +862,7 @@ if (
   process.argv[1].endsWith("goal-guard.mjs") &&
   !process.env.GOAL_GUARD_NO_MAIN
 ) {
-  process.exit(main());
+  // exitCode, not process.exit(): main() may have written the block JSON to stdout, and on Windows a
+  // pipe write is asynchronous — process.exit() right after it can truncate a block into an allow.
+  process.exitCode = main();
 }

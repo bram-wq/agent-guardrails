@@ -7,7 +7,14 @@
 // FIRED, so a removal decision can be made on counts rather than on a guess.
 //
 // ── WHAT IS RECORDED, AND WHAT IS DELIBERATELY NOT ───────────────────────────────────────────────
-// A fire line is: timestamp · hook · verdict · kind · ctx. THAT IS ALL.
+// A fire line is: timestamp · hook · verdict · kind · ctx · project. THAT IS ALL.
+//
+// `project` was appended last. The log lives under $XDG_STATE_HOME, which is one file for every
+// project on the machine, so `report` run in a fresh repo printed the counts of whichever OTHER
+// project had been busiest — a confident table about the wrong codebase. The key is the basename of
+// the git toplevel (or of cwd outside git) plus a short hash of its path, so two clones that share
+// a name still count apart. Appended, never inserted: lines written before the column existed still
+// parse, and readLog reports their project as "-", never as the current one.
 //
 // The reason text is NOT recorded, and that is a security decision rather than an oversight. A denial
 // reason embeds the offending command, and a guard that denies SECRET WRITES would therefore log the
@@ -41,9 +48,11 @@ import {
   writeFileSync,
   mkdirSync,
   existsSync,
+  realpathSync,
   statSync,
 } from "node:fs";
-import { join, dirname } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
+import { createHash } from "node:crypto";
 
 /** XDG state dir, never the repo: a dirty working tree voids every gate result. */
 export function fireLogPath(env = process.env) {
@@ -66,6 +75,52 @@ export const KEEP_FIRE_BYTES = 1_000_000;
 
 /** `kind` is a source-authored constant. Anything else is dropped rather than written. */
 export const KIND_RE = /^[a-z0-9][a-z0-9-]{0,39}$/;
+
+// Depth bound for the toplevel walk — no repo is 64 directories deep, and a hook must never turn
+// into an unbounded stat() loop.
+const MAX_WALK = 64;
+
+/**
+ * The git toplevel that contains `dir` (a `.git` DIRECTORY for a checkout, a `.git` FILE for a
+ * worktree), or `dir` itself when none is found. A filesystem walk rather than `git rev-parse`:
+ * that is a subprocess on every hook run in a file whose whole budget is "well under a millisecond",
+ * and it needs git on PATH, which a hook context cannot assume.
+ */
+export function gitToplevel(dir = process.cwd()) {
+  let d = resolve(dir);
+  try {
+    d = realpathSync(d);
+  } catch {
+    /* keep the resolved path */
+  }
+  let cur = d;
+  for (let i = 0; i < MAX_WALK; i++) {
+    if (existsSync(join(cur, ".git"))) return cur;
+    const up = dirname(cur);
+    if (up === cur) break;
+    cur = up;
+  }
+  return d;
+}
+
+const keyCache = new Map();
+/**
+ * The project column: `<basename>-<8 hex of sha1(toplevel)>`, e.g. `showcase-3f9a1c2b`. Cached per
+ * process — a hook computes it at most once, and a hook is one process.
+ * @param {string} [cwd]
+ */
+export function projectKey(cwd = process.cwd()) {
+  if (keyCache.has(cwd)) return keyCache.get(cwd);
+  let key;
+  try {
+    const top = gitToplevel(cwd);
+    key = `${basename(top) || "root"}-${createHash("sha1").update(top).digest("hex").slice(0, 8)}`;
+  } catch {
+    key = "-"; // telemetry never breaks a guard; an unattributed line is still a counted line
+  }
+  keyCache.set(cwd, key);
+  return key;
+}
 
 function append(line, env) {
   const f = fireLogPath(env);
@@ -150,7 +205,7 @@ export function recordFire(hook, verdict, kind) {
   const k = KIND_RE.test(String(kind ?? "")) ? String(kind) : "-";
   recordLastSeen(hook, "fire");
   return append(
-    `${new Date().toISOString()}\tfire\t${hook}\t${verdict}\t${k}\t${fireCtx()}\n`,
+    `${new Date().toISOString()}\tfire\t${hook}\t${verdict}\t${k}\t${fireCtx()}\t${projectKey()}\n`,
     process.env,
   );
 }
@@ -172,7 +227,7 @@ export function recordFire(hook, verdict, kind) {
 export function recordInvocation(hook) {
   recordLastSeen(hook, "run");
   return append(
-    `${new Date().toISOString()}\trun\t${hook}\t${fireCtx()}\n`,
+    `${new Date().toISOString()}\trun\t${hook}\t${fireCtx()}\t${projectKey()}\n`,
     process.env,
   );
 }
@@ -243,12 +298,14 @@ export function readLog(env = process.env) {
     const runs = [];
     for (const line of readFileSync(f, "utf8").split("\n")) {
       if (!line) continue;
-      const [ts, kind, a, b, c, d] = line.split("\t");
+      const [ts, kind, a, b, c, d, e] = line.split("\t");
       // ⚠ `?? "unknown"` and NOT `?? "live"`. Lines written before the ctx field existed cannot be
       // classified, and calling them live would silently inflate the live population with test runs.
+      // The same rule for `project`: a line written before the column existed is "-", never the
+      // project reading it — otherwise a fresh repo would inherit another project's history.
       if (kind === "fire")
-        fires.push({ ts, hook: a, verdict: b, kind: c, ctx: d ?? "unknown" });
-      else if (kind === "run") runs.push({ ts, hook: a, ctx: b ?? "unknown" });
+        fires.push({ ts, hook: a, verdict: b, kind: c, ctx: d ?? "unknown", project: e || "-" });
+      else if (kind === "run") runs.push({ ts, hook: a, ctx: b ?? "unknown", project: c || "-" });
     }
     return { fires, runs, unreadable: false, path: f };
   } catch {

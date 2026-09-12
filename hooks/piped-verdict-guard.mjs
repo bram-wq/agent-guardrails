@@ -68,6 +68,20 @@
 //     quote-aware only far enough to avoid SPLITTING on a `|` inside quotes — `grep -E 'a|b'` must not
 //     fabricate a pipeline stage — and NEWLINES end a statement, which neutralises heredoc bodies.
 //
+// ── GAPS CLOSED 2026-09-12 (adversarial probe, each pinned by a must-fire + must-not-fire twin) ───────
+// The scope above is unchanged — still only `git push` / `git merge` / `git rebase`. What changed is
+// that the SAME command reached through a different shell spelling now decides the same way:
+//   • a newline directly after `|` continues the pipeline (bash does; the splitter had ended the
+//     statement there and left an empty stage), and backslash-newline is a line continuation;
+//   • `PIPESTATUS` recovery must be a READ of the head stage — `${PIPESTATUS[0]}`, `${PIPESTATUS[@]}`
+//     or bare `$PIPESTATUS` — not the word appearing in `echo PIPESTATUS` / `: PIPESTATUS`;
+//   • compound and wrapped heads: `do`/`then`/`else`/`if`/`while`/`until` keywords, `env` (with its
+//     assignments), `{ …; } | tail` and `( … ) | tail` groups, a redirect glued to the verb
+//     (`push>log`), the space-separated `--git-dir X` / `--work-tree X` globals, and the body of a
+//     `sh|bash|zsh -c '…'` string (scanned recursively, depth-bounded);
+//   • `set -e -o pipefail` and `set -o errexit -o pipefail` ENABLE pipefail (the old regex only
+//     accepted the `-eo pipefail` cluster, a false positive on the hook's own remediation advice).
+//
 // FAIL-OPEN on any error (exit 0), like every guard here: a hook bug must never brick real work.
 // CLAUDE_HOOKS_QUIET=1 lifts it — this one blocks, so its escape valve must work. Both test runners strip
 // the variable so it can never hide a green.
@@ -117,11 +131,35 @@ const FILTERS = new Set([
 ]);
 const GREPS = new Set(["grep", "egrep", "fgrep", "rg", "ag"]);
 
-// `set -o pipefail` / `-eo` / `-euo pipefail` turn a pipeline's status into the rightmost failure, so the
-// verdict survives. `set +o pipefail` turns it back off. Both are matched against a single STATEMENT, so
-// a `pipefail` merely MENTIONED (`echo pipefail`, a commit message, a grep pattern) cannot enable it.
-const PIPEFAIL_ON = /(?:^|[\s(])set\s+-[a-z]*o\s+pipefail\b/;
-const PIPEFAIL_OFF = /(?:^|[\s(])set\s+\+[a-z]*o\s+pipefail\b/;
+// `set -o pipefail` / `-eo` / `-euo pipefail` / `-e -o pipefail` / `-o errexit -o pipefail` turn a
+// pipeline's status into the rightmost failure, so the verdict survives. `set +o pipefail` turns it back
+// off. Decided per STATEMENT from a token walk of a `set` command, so a `pipefail` merely MENTIONED
+// (`echo pipefail`, a commit message, a grep pattern) cannot enable it. A single-token regex
+// (`-[a-z]*o pipefail`) used to sit here and denied `set -o errexit -o pipefail`, a correct command.
+//
+// @param {{word:string, toks:string[]}} h  the statement's head
+// @returns {boolean|null}  true = enabled, false = disabled, null = this statement does not touch it
+function pipefailChange(h) {
+  if (h.word !== "set") return null;
+  let state = null;
+  for (let k = 1; k + 1 < h.toks.length; k++) {
+    if (h.toks[k + 1] !== "pipefail") continue;
+    if (/^-[a-z]*o$/.test(h.toks[k])) state = true;
+    else if (/^\+[a-z]*o$/.test(h.toks[k])) state = false;
+  }
+  return state;
+}
+
+// A READ of the head stage's status. `${PIPESTATUS[0]}`, the whole array, or bare `$PIPESTATUS` (which
+// bash expands to element 0). The word alone — `echo PIPESTATUS`, `: PIPESTATUS` — reads nothing and
+// used to pass a `.includes("PIPESTATUS")` check.
+const PIPESTATUS_READ = /\$(?:PIPESTATUS\b|\{PIPESTATUS\[(?:0|@|\*)\]\})/;
+
+// `sh -c '…'` / `bash -lc "…"` / `zsh -c` — the quoted body is a command of its own and is scanned as one.
+const SHELLS = new Set(["sh", "bash", "zsh", "dash"]);
+const MAX_SHELL_DEPTH = 3;
+const SINGLE_STMT_OF_INTEREST = /\b(?:set|sh|bash|zsh|dash)\b/;
+const GROUP_LOOKBACK = 16; // statements walked back from a `} | tail` / `) | tail` to find the group's head
 
 /**
  * Split a command into STATEMENTS, each a list of pipeline SEGMENTS.
@@ -162,6 +200,12 @@ export function splitStatements(s) {
   let i = 0;
   while (i < n) {
     const ch = s[i];
+    // Backslash-newline is a LINE CONTINUATION: it is not text and does not end the statement.
+    if (ch === "\\" && s[i + 1] === "\n") {
+      cur += " ";
+      i += 2;
+      continue;
+    }
     // A backslash escape hides whatever follows from every rule below, exactly as the shell does.
     if (ch === "\\" && i + 1 < n) {
       cur += ch + s[i + 1];
@@ -187,6 +231,13 @@ export function splitStatements(s) {
       cur += s.slice(i, end);
       prevSig = '"';
       i = end;
+      continue;
+    }
+    // A newline right after `|` (whitespace only since) CONTINUES the pipeline — bash accepts
+    // `git push … |\n tail -3` as one pipeline. Ending the statement here left an empty head stage and
+    // the guard never saw the pipe (measured miss, 2026-09-12).
+    if (ch === "\n" && segs.length > 0 && cur.trim() === "") {
+      i++;
       continue;
     }
     if (ch === "\n" || ch === ";") {
@@ -262,21 +313,58 @@ export function commandWordOf(seg) {
     s = s.replace(/^\$\(\s*/, ""); // $( …
     s = s.replace(/^[({`]+\s*/, ""); // ( …   { …   ` …
     s = s.replace(/^\w+=(?:"[^"]*"|'[^']*'|\S*)\s+/, ""); // VAR=value cmd
-    s = s.replace(/^(?:!|time|command|nohup|sudo|exec)\s+/, ""); // transparent prefixes
+    s = s.replace(/^(?:!|time|command|nohup|sudo|exec|env)\s+/, ""); // transparent prefixes
+    // Compound-command keywords: `if git push | tail; then`, `do git push | tail; done`. The pipeline
+    // after the keyword is the one whose status is thrown away.
+    s = s.replace(/^(?:if|then|else|elif|do|while|until)\s+/, "");
     if (s === before) break;
   }
-  const toks = s.split(/\s+/).filter(Boolean);
+  const toks = s
+    .split(/\s+/)
+    .filter(Boolean)
+    // A redirect is not a word (`2>&1`, `>log`), and one GLUED to a word is cut off it: `push>log` is
+    // the verb `push`. A group closer glued on is cut the same way: `push)` in `(git push) | tail`.
+    .filter((t) => !/^\d*[<>&]/.test(t))
+    .map((t) => t.replace(/[<>;)}].*$/, ""))
+    .filter(Boolean);
   // Basename, so `/usr/bin/git` and `./node_modules/.bin/vitest` are still their command word.
   const word = (toks[0] ?? "").split("/").pop() ?? "";
   return { word, toks };
 }
 
-/** First token after the command word that is not a flag. `-c k=v` / `-C dir` swallow the next token. */
+/**
+ * The body of a `sh -c '…'` / `bash -lc "…"` head, or null. Only a QUOTED body can hold a pipe, so
+ * an unquoted argument is not looked at. Double-quoted bodies get `\"` and `\\` unescaped, nothing more.
+ * @param {string} seg
+ * @param {{word:string}} head  the segment's already-computed command word
+ * @returns {string|null}
+ */
+function shellCBody(seg, head) {
+  if (!SHELLS.has(head.word)) return null;
+  const m = /(?:^|\s)-[a-zA-Z]*c[a-zA-Z]*\s+(['"])/.exec(seg);
+  if (!m) return null;
+  const q = m[1];
+  const start = m.index + m[0].length;
+  if (q === "'") {
+    const e = seg.indexOf("'", start);
+    return seg.slice(start, e === -1 ? seg.length : e);
+  }
+  let j = start;
+  while (j < seg.length && seg[j] !== '"') j += seg[j] === "\\" ? 2 : 1;
+  return seg.slice(start, j).replace(/\\(["\\])/g, "$1");
+}
+
+/**
+ * First token after the command word that is not a flag. The git globals that take a SEPARATE argument
+ * — `-c k=v`, `-C dir`, `--git-dir dir`, `--work-tree dir` — swallow the next token; their `=` forms are
+ * one token already.
+ */
+const ARG_TAKING_GLOBALS = new Set(["-c", "-C", "--git-dir", "--work-tree"]);
 function firstOperand(toks, from = 1) {
   for (let k = from; k < toks.length; k++) {
     const t = toks[k];
     if (t[0] !== "-") return t;
-    if (t === "-c" || t === "-C") k++; // consumes its argument, whatever it is
+    if (ARG_TAKING_GLOBALS.has(t)) k++; // consumes its argument, whatever it is
   }
   return "";
 }
@@ -340,7 +428,7 @@ export function verdictOf(h) {
  * @param {string} rawCommand
  * @returns {{ verdict: string, filter: string, statement: string } | null}
  */
-export function decide(rawCommand) {
+export function decide(rawCommand, depth = 0) {
   const cmd = String(rawCommand ?? "");
   if (!cmd) return null;
 
@@ -349,21 +437,46 @@ export function decide(rawCommand) {
   for (let i = 0; i < statements.length; i++) {
     const segs = statements[i];
     const text = segs.join("|");
-    // Order matters: `set +o pipefail` must be able to cancel an earlier enable.
-    if (PIPEFAIL_OFF.test(text)) pipefail = false;
-    else if (PIPEFAIL_ON.test(text)) pipefail = true;
-
-    if (segs.length < 2) continue; // no pipe → the exit code is already the command's own
+    // An unpiped statement matters only if it flips pipefail or wraps a shell body; a cheap word test
+    // keeps commandWordOf() off the thousands of plain statements a long command can carry.
+    if (segs.length < 2) {
+      if (!SINGLE_STMT_OF_INTEREST.test(segs[0])) continue;
+      const head = commandWordOf(segs[0]);
+      // Order matters: `set +o pipefail` must be able to cancel an earlier enable.
+      const pf = pipefailChange(head);
+      if (pf !== null) pipefail = pf;
+      // `bash -c '…'`: the quoted body is a command of its own. Bounded so nesting cannot recurse away.
+      if (depth < MAX_SHELL_DEPTH) {
+        const body = shellCBody(segs[0], head);
+        if (body) {
+          const inner = decide(body, depth + 1);
+          if (inner) return inner;
+        }
+      }
+      continue; // no pipe → the exit code is already the command's own
+    }
     if (pipefail) continue; // the shell is carrying the failure through for us
+    const head = commandWordOf(segs[0]);
 
-    const verdict = verdictOf(commandWordOf(segs[0]));
+    // `{ git push; } | tail` / `( … ) | tail`: the `;` ended the statement, so this one's head is the
+    // group CLOSER and the verdict-bearing command sits in an earlier statement. Walk back to the
+    // opener (bounded) and take the first verdict found inside the group.
+    let verdict = verdictOf(head);
+    if (!verdict && /^\s*[})]/.test(segs[0])) {
+      for (let j = i - 1; j >= 0 && j >= i - GROUP_LOOKBACK; j--) {
+        const first = statements[j][0];
+        verdict = verdictOf(commandWordOf(first)) || verdict;
+        if (/^\s*[{(]/.test(first)) break;
+      }
+    }
     if (!verdict) continue;
     const last = commandWordOf(segs[segs.length - 1]);
     if (!isPureFilter(last)) continue;
 
-    // The ONLY statement where bash still holds this pipeline's PIPESTATUS is the next one.
+    // The ONLY statement where bash still holds this pipeline's PIPESTATUS is the next one — and it
+    // must READ it, not mention it.
     const next = statements[i + 1] ? statements[i + 1].join("|") : "";
-    if (next.includes("PIPESTATUS")) continue;
+    if (PIPESTATUS_READ.test(next)) continue;
 
     return { verdict, filter: last.word, statement: text.trim().slice(0, 200) };
   }

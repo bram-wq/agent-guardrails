@@ -1,7 +1,8 @@
 // Behavioural test for goal-guard.mjs — run: `node hooks/goal-guard.test.mjs`.
 //
 // CONTRACT: with a goal ARMED, a turn whose last assistant message asserts completion (a line opening
-// with `result:`, `DONE`, `Done.` or `verified complete`) is BLOCKED unless the goal's stopping
+// — after markdown decoration — with `result:`, `DONE`, a claim-only sentence such as `Done.` /
+// `Finished.` / `Implemented and merged.`, or `verified complete`) is BLOCKED unless the goal's stopping
 // command has been recorded exiting 0 — exit 0 plus `{"decision":"block"}` on stdout, the Stop hook
 // contract. A test asserting the wrong contract passes silently, so the shape is pinned here too.
 //
@@ -26,7 +27,7 @@ const HOOK = join(dirname(fileURLToPath(import.meta.url)), "goal-guard.mjs");
 // Importing does NOT run main(): the module only self-executes when process.argv[1] is
 // goal-guard.mjs, and here it is this test file.
 const mod = await import("./goal-guard.mjs");
-const { stamp, MAX_LEDGER_LINES, MAX_EVENT_BYTES, goalFile, worktreeKey, claimsCompletion } = mod;
+const { stamp, MAX_LEDGER_LINES, MAX_EVENT_BYTES, goalFile, worktreeKey, claimsCompletion, validateObjective } = mod;
 
 // Every spawned hook writes its telemetry to a scratch log, tagged as test traffic, so a suite run
 // never inflates the live fire count that keeps a hook alive.
@@ -41,6 +42,7 @@ function baseEnv(dir) {
   delete e.CLAUDE_HOOKS_QUIET;
   delete e.GOAL_GUARD_DENY_RE;
   delete e.GOAL_GUARD_ALLOW_NPM_RE;
+  delete e.GOAL_GUARD_ALLOW_NPM_SCRIPTS;
   return e;
 }
 
@@ -67,6 +69,8 @@ function readLedger(dir) {
 }
 
 /** Drive the Stop event. Returns "block" | "allow" | a diagnostic. */
+// Both helpers spawn the hook FROM the fixture directory, as a session runs it from its worktree:
+// the stopping command may only run code inside the tree it is keyed by, and the fixtures live there.
 function stop(dir, message, { active = false, env = null } = {}) {
   const r = spawnSync("node", [HOOK], {
     input: JSON.stringify({
@@ -74,6 +78,7 @@ function stop(dir, message, { active = false, env = null } = {}) {
       stop_hook_active: active,
       last_assistant_message: message,
     }),
+    cwd: dir,
     encoding: "utf8",
     env: env || baseEnv(dir),
     timeout: 20000,
@@ -91,6 +96,7 @@ function stop(dir, message, { active = false, env = null } = {}) {
 
 function run(dir, args, env = null) {
   const r = spawnSync("node", [HOOK, ...args], {
+    cwd: dir,
     encoding: "utf8",
     env: env || baseEnv(dir),
     timeout: 60000,
@@ -193,6 +199,19 @@ const doneOk = (dir) => exitScript(dir, 0);
     ["`Done.` opening a line", "Done. The hook is wired."],
     ["`verified complete` opening a line", "verified complete — the build passes."],
     ["`Verified complete` capitalised", "Verified complete."],
+    // ── the adversarial probe: every one of these was ALLOWED by a column-0 `Done.` anchor ──
+    ["`Done!`", "Done!"],
+    ["`**Done.**` (bold)", "**Done.**"],
+    ["`✅ Done.` (emoji-led)", "✅ Done."],
+    ["`- Done.` (list item)", "- Done."],
+    ["`## Done` (heading, no punctuation)", "## Done"],
+    ["`done.` lower-case as a whole sentence", "done."],
+    ["`Finished. All shipped.`", "Finished. All shipped."],
+    ["`Complete.`", "Complete."],
+    ["`Implemented and merged.`", "Implemented and merged."],
+    ["`The task is done.`", "The task is done."],
+    ["`> Done.` (blockquote)", "> Done."],
+    ["`1. Done.` (numbered)", "1. Done."],
   ]) {
     check(`FIRE  claim shape ${label}`, stop(d, msg), "block");
     check(`FIRE  (unit) claimsCompletion sees ${label}`, claimsCompletion(msg), true);
@@ -206,10 +225,20 @@ const doneOk = (dir) => exitScript(dir, 0);
     ["`DONE WHEN:` — this guard's own goal format", "GOAL: land it\nDONE WHEN: node hooks/x.test.mjs"],
     ["`verified` alone", "verified the failing case; fixing it now."],
     ["a mid-sentence `verified complete`", "It is not yet verified complete."],
+    ["`DONE-ish` — a hedge, not a verdict (was a false positive)", "DONE-ish — the last case still flakes."],
+    ["`Shipped the thing.` — a claim word with an object is narration", "Shipped the thing to staging; verifying next."],
+    ["`Merged main into the branch.`", "Merged main into the branch and re-ran the suite."],
+    ["`- done with the schema` (decorated sub-step)", "- done with the schema, API next"],
   ]) {
     check(`ALLOW non-claim: ${label}`, stop(d, msg), "allow");
     check(`ALLOW (unit) claimsCompletion ignores ${label}`, claimsCompletion(msg), false);
   }
+  // A non-string payload is not a claim. It used to be stringified, so an ARRAY of content blocks
+  // whose first element read `Done.` fired as `Done.,…` — a claim nobody wrote.
+  check("ALLOW a non-string last_assistant_message (array) is not stringified into a claim", stop(d, ["Done.", "x"]), "allow");
+  check("ALLOW (unit) claimsCompletion(array) is false", claimsCompletion(["Done."]), false);
+  check("ALLOW (unit) claimsCompletion(null) is false", claimsCompletion(null), false);
+  check("ALLOW (unit) claimsCompletion(object) is false", claimsCompletion({ text: "Done." }), false);
 }
 
 // ── THE DENYLIST, both entry points and both directions ────────────────────────────────────────────
@@ -338,7 +367,7 @@ const doneOk = (dir) => exitScript(dir, 0);
     "armed",
   );
   const feed = (input) =>
-    spawnSync("node", [HOOK], { input, encoding: "utf8", env: baseEnv(d), timeout: 30000, maxBuffer: 64 * 1024 * 1024 });
+    spawnSync("node", [HOOK], { input, cwd: d, encoding: "utf8", env: baseEnv(d), timeout: 30000, maxBuffer: 64 * 1024 * 1024 });
   const r1 = feed("{not json at all");
   check(
     "ALLOW unparseable hook input fails OPEN",
@@ -370,6 +399,7 @@ const doneOk = (dir) => exitScript(dir, 0);
   const sessionStart = (dir, extra = {}) =>
     spawnSync("node", [HOOK], {
       input: JSON.stringify({ hook_event_name: "SessionStart", source: "resume", ...extra }),
+      cwd: dir,
       encoding: "utf8",
       env: baseEnv(dir),
       timeout: 20000,
@@ -397,6 +427,7 @@ const doneOk = (dir) => exitScript(dir, 0);
     "ALLOW CLAUDE_HOOKS_QUIET=1 suppresses the informational SessionStart injection",
     spawnSync("node", [HOOK], {
       input: JSON.stringify({ hook_event_name: "SessionStart" }),
+      cwd: d,
       encoding: "utf8",
       env: { ...baseEnv(d), CLAUDE_HOOKS_QUIET: "1" },
     }).stdout.trim() === ""
@@ -412,6 +443,7 @@ const doneOk = (dir) => exitScript(dir, 0);
   const startAs = (sessionId) =>
     spawnSync("node", [HOOK], {
       input: JSON.stringify({ hook_event_name: "SessionStart", source: "resume", session_id: sessionId }),
+      cwd: d,
       encoding: "utf8",
       env: baseEnv(d),
       timeout: 20000,
@@ -547,11 +579,96 @@ const doneOk = (dir) => exitScript(dir, 0);
   check("FIRE  a hyphenated WRITER beside a verification namespace is refused by shape: `gate-index`", armed("npm run gate-index"), "refused");
   check("FIRE  …and `test-strength:accept`", armed("npm run test-strength:accept"), "refused");
 
-  // GOAL_GUARD_ALLOW_NPM_RE extends the namespaces for a repo whose scripts live elsewhere.
-  const ext = { ...baseEnv(d), GOAL_GUARD_ALLOW_NPM_RE: "qa:[\\w:.-]+" };
-  check("ALLOW GOAL_GUARD_ALLOW_NPM_RE admits a repo-specific namespace", armed("npm run qa:smoke", ext), "accepted");
+  // GOAL_GUARD_ALLOW_NPM_SCRIPTS adds LITERAL script names for a repo whose scripts live elsewhere.
+  const ext = { ...baseEnv(d), GOAL_GUARD_ALLOW_NPM_SCRIPTS: "qa:smoke, check:all" };
+  check("ALLOW GOAL_GUARD_ALLOW_NPM_SCRIPTS admits a listed repo-specific script", armed("npm run qa:smoke", ext), "accepted");
+  check("ALLOW …and a second listed name: `npm run check:all`", armed("npm run check:all", ext), "accepted");
   check("FIRE  …without admitting `deploy`", armed("npm run deploy", ext), "refused");
+  check("FIRE  …and a listed name is a NAME, not a prefix: `qa:smoke:prod` is not admitted", armed("npm run qa:smoke:prod", ext), "refused");
   check("ALLOW …and the defaults still apply alongside it", armed("npm run typecheck", ext), "accepted");
+
+  // ★ THE PROBE: `GOAL_GUARD_ALLOW_NPM_RE='.*'` made `npm run deploy` armable — the env could WIDEN
+  // the allowlist to everything while the denylist beside it was immutable. The env is a LIST now.
+  const wide = { ...baseEnv(d), GOAL_GUARD_ALLOW_NPM_RE: ".*" };
+  check("FIRE  ★ BYPASS: GOAL_GUARD_ALLOW_NPM_RE='.*' can no longer admit `npm run deploy`", armed("npm run deploy", wide), "refused");
+  check(
+    "FIRE  …and the dropped entry is said out loud, not silently ignored",
+    // `anything` rather than `deploy`: the floor refuses `deploy` before the list is even parsed.
+    (() => { const r = run(d, ["--set", "x", "--done", "npm run anything"], wide); return r.status === 1 && /not a literal script name/.test(r.out) ? "loud" : "silent"; })(),
+    "loud",
+  );
+  for (const pat of ["deploy|test", "(?:.*)", "^.+$"]) {
+    check(`FIRE  a regex-shaped entry \`${pat}\` admits nothing`, armed("npm run deploy", { ...baseEnv(d), GOAL_GUARD_ALLOW_NPM_SCRIPTS: pat }), "refused");
+  }
+  check("FIRE  the env cannot list its way past the floor: `deploy` as a literal is still refused", armed("npm run deploy", { ...baseEnv(d), GOAL_GUARD_ALLOW_NPM_SCRIPTS: "deploy" }), "refused");
+  check("FIRE  …nor `release:prod`", armed("npm run release:prod", { ...baseEnv(d), GOAL_GUARD_ALLOW_NPM_SCRIPTS: "release:prod" }), "refused");
+  check("ALLOW the old env name still adds a LITERAL name", armed("npm run check:all", { ...baseEnv(d), GOAL_GUARD_ALLOW_NPM_RE: "check:all" }), "accepted");
+}
+
+// ── THE ALLOWLIST CANNOT BE STEERED OFF THE WORKTREE ─────────────────────────────────────────────
+// The probe, verbatim: `npm test --prefix /tmp/evilpkg` ARMED, and `--prove` ran /tmp code and
+// recorded exit=0 — an allowlisted head pointed at a package no Write hook had seen. Same for
+// `npm run lint --prefix /tmp/x`, `npx vitest --root /tmp/x`, `npx vitest --config /tmp/evil.mjs`.
+{
+  const tree = fresh(); // a non-git directory IS its own worktree for keying purposes
+  const outside = fresh(); // a sibling scratch dir: outside `tree`, and real on disk
+  writeFileSync(join(outside, "evil.mjs"), "process.exit(0)\n");
+  const armed = (done) => {
+    const r = run(tree, ["--set", "x", "--done", done]);
+    if (r.status === 0) return "accepted";
+    if (r.status === 1 && /REFUSED/.test(r.out)) return "refused";
+    return `NOT-MEASURED(status=${r.status}): ${r.out.trim().slice(0, 60)}`;
+  };
+  for (const cmd of [
+    `npm test --prefix ${outside}`,
+    `npm run lint --prefix ${outside}`,
+    `npx vitest --root ${outside}`,
+    `npx vitest --config ${outside}/evil.mjs`,
+    `npx vitest --config=${outside}/evil.mjs`,
+    `npm test -- --prefix=${outside}`,
+    `npm test -C ${outside}`,
+    `npx vitest --dir ${outside}`,
+    `node scripts/check.mjs -r ${outside}/evil.mjs`,
+    `node scripts/check.mjs --require ${outside}/evil.mjs`,
+    `node scripts/check.mjs --import ${outside}/evil.mjs`,
+    `node scripts/check.mjs --loader ${outside}/evil.mjs`,
+    `node ${outside}/evil.mjs`,
+    "node ../evil.mjs",
+    "npx vitest run ../../other/x.test.ts",
+    "node scripts/../../evil.mjs",
+    // The flag alone is the escape — an IN-tree value is still a relocation or a preload.
+    "npm test --prefix ./packages/evil",
+    "npx vitest --root packages/evil",
+    "npx vitest --config vitest.evil.mjs",
+    "npx vitest -c vitest.evil.mjs",
+    "node scripts/check.mjs -r ./preload.mjs",
+    "node scripts/check.mjs --import=./preload.mjs",
+    "node scripts/check.mjs --loader ./loader.mjs",
+    "npm test -- --dir tests/evil",
+  ]) {
+    check(`FIRE  ★ BYPASS: --set refuses a verification steered off the tree: \`${cmd.replace(outside, "<outside>")}\``, armed(cmd), "refused");
+  }
+  check("FIRE  a refused off-tree --set leaves NO goal armed", run(tree, ["--status"]).out.includes("no goal is set") ? "unarmed" : "armed", "unarmed");
+  // …and at --prove, for a goal file written directly on disk.
+  writeFileSync(join(tree, "goal.json"), JSON.stringify({ goal: "sneak", doneCommand: `npm test --prefix ${outside}`, setAt: new Date().toISOString() }));
+  const p = run(tree, ["--prove"]);
+  check("FIRE  ★ --prove refuses an off-tree --prefix written straight into the goal file", p.status === 1 && /REFUSED/.test(p.out) ? "refused" : `status=${p.status}`, "refused");
+  check("FIRE  …and recorded nothing", existsSync(join(tree, "goal-ledger.log")) ? "stamped" : "clean", "clean");
+  // The legitimate twins: flags that are NOT relocations, paths that stay inside the tree.
+  writeFileSync(join(tree, "goal.json"), "{}");
+  run(tree, ["--clear"]);
+  for (const cmd of [
+    "npm test -- --runInBand",
+    "npx vitest run src/x.test.ts",
+    "node scripts/check.mjs",
+    "npm test -- --reporter=dot",
+    "npx vitest run --coverage",
+    `node ${join(tree, "exit0.mjs")}`,
+    "node scripts/check.mjs --root-cause",
+    "npm run test:e2e -- --retries 2",
+  ]) {
+    check(`ALLOW the twin still arms: \`${cmd.replace(tree, "<tree>")}\``, armed(cmd), "accepted");
+  }
 }
 
 {
@@ -592,6 +709,16 @@ const doneOk = (dir) => exitScript(dir, 0);
     "refused",
   );
   check("ALLOW a delta-shaped objective ARMS without --baseline/--invariant (they are optional)", setOf(["--set", "the gate returns green on three consecutive runs", "--done", doneOk(d)]), "armed");
+  // ★ THE PROBE: a substring word list refused all three of these — "handle" and "support" were
+  // present, but neither was the PREDICATE. The vague word must be what the objective turns on.
+  for (const g of ["the handle is red", "support 3 locales", "support: tests pass", "the robust-mode flag defaults to off", "handle count is 4 after the fix", "improvement.mjs exits 0"]) {
+    check(`ALLOW a concrete objective that merely CONTAINS a vague word arms: '${g}'`, setOf(["--set", g, "--done", doneOk(d)]), "armed");
+    check(`ALLOW (unit) validateObjective accepts '${g}'`, validateObjective(g).ok, true);
+  }
+  for (const g of ["improve the pipeline", "refactor the auth module", "make push-to-deploy flawless", "clean up the hooks", "the migration works properly", "Please improve the gate"]) {
+    check(`FIRE  a vague PREDICATE is still refused: '${g}'`, setOf(["--set", g, "--done", doneOk(d)]), "refused");
+    check(`FIRE  (unit) validateObjective refuses '${g}'`, validateObjective(g).ok, false);
+  }
   const r = run(d, ["--set", "the gate returns green on three consecutive runs", "--baseline", "Today it fails 1 run in 6 with a timeout at 141s", "--invariant", "no committed test is deleted or skipped", "--done", doneOk(d)]);
   check("ALLOW …and with both fields it ARMS and REPORTS the baseline back", r.status === 0 && /Today it fails 1 run in 6/.test(r.out) ? "armed+shown" : `status=${r.status}`, "armed+shown");
   check(

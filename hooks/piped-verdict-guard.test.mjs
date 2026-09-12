@@ -252,6 +252,122 @@ check(
   "allow",
 );
 
+// ── GAPS CLOSED 2026-09-12 — each false negative/positive from the adversarial probe, with its twin ──
+// Scope is unchanged (push/merge/rebase only); these are the SAME command reached through a different
+// shell spelling. Every FIRE below was an ALLOW before the fix, and both pipefail ALLOWs were DENYs.
+
+// 1. newline continuation after `|`
+check(
+  "FIRE  ★ a newline right after `|` continues the pipeline (the splitter used to end the statement)",
+  decide(`${PUSH} 2>&1 |\n tail -3`),
+  "deny",
+);
+check(
+  "FIRE  backslash-newline after the pipe is a line continuation (the escape rule used to keep the backslash as the filter word)",
+  decide(`${PUSH} origin x | \\\n  tail -3`),
+  "deny",
+);
+check(
+  "ALLOW  a newline after `|` on a READ is still a read",
+  decide(`git log --oneline |\n head -3`),
+  "allow",
+);
+check(
+  "ALLOW  a newline WITHOUT a trailing pipe still separates statements (the push is unpiped)",
+  decide(`${PUSH}\ntail -3 /tmp/x.log`),
+  "allow",
+);
+
+// 2. PIPESTATUS must be READ, not mentioned
+check(
+  "FIRE  ★ `echo PIPESTATUS` in the next statement reads nothing",
+  decide(`${PUSH} | tail -1; echo PIPESTATUS`),
+  "deny",
+);
+check(
+  "FIRE  ★ `: PIPESTATUS` in the next statement reads nothing",
+  decide(`${PUSH} | tail -1; : PIPESTATUS`),
+  "deny",
+);
+check(
+  "ALLOW ★ rc=\${PIPESTATUS[0]} in the next statement is the read the hook asks for",
+  decide(`${PUSH} | tail -1; rc=\${PIPESTATUS[0]}`),
+  "allow",
+);
+check(
+  "ALLOW  the whole array, quoted, is a read too",
+  decide(`${PUSH} | tail -1; echo "\${PIPESTATUS[@]}"`),
+  "allow",
+);
+check(
+  "ALLOW  bare $PIPESTATUS expands to element 0 in bash",
+  decide(`${PUSH} | tail -1; echo $PIPESTATUS`),
+  "allow",
+);
+
+// 3. compound / wrapped heads
+for (const [label, cmd] of [
+  ["inside a for loop body", `for b in a b; do ${PUSH} origin $b | tail -1; done`],
+  ["as an if condition", `if ${PUSH} | tail -1; then echo ok; fi`],
+  ["in an else branch", `if false; then :; else ${PUSH} | tail -1; fi`],
+  ["a brace group piped to tail", `{ ${PUSH}; } | tail`],
+  ["a brace group whose LAST command is the push", `{ echo start; ${PUSH}; } | tail -2`],
+  ["a subshell piped to tail", `(${PUSH}) | tail`],
+  ["behind env with an assignment", `env GIT_X=1 ${PUSH} | tail`],
+  ["behind a bare VAR=val", `VAR=1 ${PUSH} | tail`],
+  ["git --work-tree DIR (space form)", `git --work-tree /x pu` + `sh | tail`],
+  ["git --git-dir DIR (space form)", `git --git-dir /x/.git pu` + `sh | tail`],
+  ["git -C DIR", `git -C dir pu` + `sh | tail`],
+  ["git -c k=v", `git -c core.x=1 pu` + `sh | tail`],
+  ["a redirect glued to the verb", `${PUSH}>log 2>&1 | tail`],
+  ["inside bash -c '…'", `bash -c '${PUSH} origin x | tail -1'`],
+  ["inside sh -c \"…\"", `sh -c "${PUSH} origin x | tail -1"`],
+  ["inside bash -lc after a cd", `bash -lc 'cd /x && ${PUSH} | tail -1'`],
+])
+  check(`FIRE  ${label}`, decide(cmd), "deny");
+for (const [label, cmd] of [
+  ["a for loop body that is a read", "for b in a b; do git log -1 $b | head -1; done"],
+  ["an if condition where grep -q owns the verdict", `if ${PUSH} | grep -q rejected; then echo no; fi`],
+  ["a loop body that reads PIPESTATUS in the next statement", `for b in a b; do ${PUSH} $b | tail -1; rc=\${PIPESTATUS[0]}; done`],
+  ["a brace group of reads", "{ git log -1; git status; } | head -5"],
+  ["a brace group with a push that ends BEFORE the piped group", `{ ${PUSH}; }; { echo x; } | tail`],
+  ["a subshell of reads", "(git log -1) | head -1"],
+  ["env in front of a read", "env GIT_PAGER=cat git log | head -3"],
+  ["git --work-tree DIR with a read subcommand", "git --work-tree /x status | head"],
+  ["a redirect glued to a read", "git log>log 2>&1 | tail"],
+  ["bash -c with a read inside", "bash -c 'git log --oneline | head -3'"],
+  ["bash -c whose body recovers the status", `bash -c '${PUSH} | tail -1; rc=\${PIPESTATUS[0]}'`],
+  ["bash -c with an unquoted argument (no pipe possible)", "bash -c true | tail -1"],
+])
+  check(`ALLOW ${label}`, decide(cmd), "allow");
+
+// 4. pipefail spelled as separate `set` options
+check(
+  "ALLOW ★ set -o errexit -o pipefail enables pipefail (was a false positive)",
+  decide(`set -o errexit -o pipefail; ${PUSH} | tail`),
+  "allow",
+);
+check(
+  "ALLOW ★ set -e -o pipefail enables pipefail (was a false positive)",
+  decide(`set -e -o pipefail; ${PUSH} | tail`),
+  "allow",
+);
+check(
+  "FIRE  set -e -o pipefail later undone by set +o pipefail (pins the existing cancel behaviour)",
+  decide(`set -e -o pipefail; set +o pipefail; ${PUSH} | tail -1`),
+  "deny",
+);
+check(
+  "FIRE  set -o errexit alone is not pipefail",
+  decide(`set -o errexit; ${PUSH} | tail -1`),
+  "deny",
+);
+check(
+  "FIRE  `pipefail` as a set argument that is not an -o option",
+  decide(`set -- pipefail; ${PUSH} | tail -1`),
+  "deny",
+);
+
 // ── SCOPE, FAIL-OPEN, ESCAPE VALVE ────────────────────────────────────────────────────────────────
 check(
   "ALLOW non-Bash tools are ignored",
