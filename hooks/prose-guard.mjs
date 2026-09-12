@@ -128,7 +128,11 @@ const PREFIX_OPT_WITH_ARG = /^-(?:u|g|C|D|R|r|t|T|U)$/;
 // `$VAR` is left alone — the caller treats a token that still holds one as "cannot tell".
 function expandPath(tok) {
   const home = process.env.HOME || process.env.USERPROFILE || "";
-  let p = tok.replace(/["']/g, "").replace(/\\(.)/g, "$1");
+  // On Windows a backslash is the path separator (`C:\Users\me\run.sh`), so only a backslash
+  // before whitespace, a quote or another metacharacter is an escape there; stripping every
+  // backslash turned the runner's own tmpdir into `C:UsersRUNNER~1…` and judged a real file absent.
+  const esc = process.platform === "win32" ? /\\([\s"'$`\\])/g : /\\(.)/g;
+  let p = tok.replace(/["']/g, "").replace(esc, "$1");
   if (home) {
     p = p.replace(/^~(?=\/|$)/, home).replace(/^\$(?:HOME\b|\{HOME\})/, home);
   }
