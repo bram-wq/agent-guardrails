@@ -3,6 +3,18 @@
 All notable changes to this project are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org).
 
+## [0.3.1] — 2026-09-12
+
+### Fixed
+
+- v0.3.0's tarball did not carry `hooks/rules/`, so `npx github:…#v0.3.0 init` installed
+  `secret-write-guard` without its rules file and the guard failed open on every install; `doctor` on
+  a clean machine was the only thing that noticed. `files` now includes the directory, and the installer
+  suite asserts the packed list carries every file `init` copies.
+- `secret-write-guard` announces when it is OFF: a missing or malformed rules file still fails open, but
+  the hook now prints a `systemMessage` naming the guard and the fix, so the outage is visible in the
+  transcript rather than only as a fire of kind `error` in the log.
+
 ## [0.3.0] — 2026-09-12
 
 Driven by a survey of the guardrail landscape (deterministic hook sets, sandboxes, policy files,

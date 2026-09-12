@@ -36,7 +36,11 @@ function feed(input, env = BASE_ENV) {
   const out = (r.stdout ?? "").trim();
   if (!out) return { verdict: "allow", out, reason: "" };
   try {
-    const h = JSON.parse(out).hookSpecificOutput;
+    const j = JSON.parse(out);
+    // No decision but a systemMessage: the guard is announcing it is OFF. Still an allow — the
+    // write goes through — but the notice must be there, and the cases below assert it separately.
+    if (!j.hookSpecificOutput && typeof j.systemMessage === "string") return { verdict: "allow", out, reason: j.systemMessage, off: true };
+    const h = j.hookSpecificOutput;
     return { verdict: h.permissionDecision, out, reason: h.permissionDecisionReason ?? "" };
   } catch {
     return { verdict: `UNPARSEABLE:${out.slice(0, 40)}`, out, reason: "" };
@@ -240,6 +244,12 @@ const errorFires = () => fireLines().filter((l) => /\tfire\tsecret-write-guard\.
   const before = errorFires();
   const env = { ...BASE_ENV, SECRET_GUARD_RULES: join(TMP, "does-not-exist.json") };
   check("ALLOW a MISSING rules file fails open", write(".env", `K=${AWS}`, env), "allow");
+{
+  const off = run("Write", { file_path: ".env", content: `K=${AWS}` }, { ...BASE_ENV, SECRET_GUARD_RULES: join(TMP, "no-such-rules.json"), HOOK_FIRE_LOG: join(TMP, "off-notice-fires.log") }); // own log: the outage-count case below must not see this fire
+  check("FIRE  …and SAYS SO: a missing rules file produces a systemMessage naming the guard as OFF", off.off === true && /secret-write-guard is OFF/.test(off.reason) ? "announced" : `silent:${off.out.slice(0, 40)}`, "announced");
+  const on = run("Write", { file_path: "notes.md", content: "nothing secret here" });
+  check("ALLOW no notice when the rules load and nothing fires (stdout stays empty)", on.out === "" ? "silent" : `noisy:${on.out.slice(0, 40)}`, "silent");
+}
   check("…and records a fire of kind \"error\" (measurable outage)", errorFires() - before, 1);
 }
 {

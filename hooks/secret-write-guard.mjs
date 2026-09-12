@@ -422,7 +422,23 @@ function main() {
   } catch {
     reason = null; // fail-open: a bug in the decider must never block real work
   }
-  if (reason) deny(reason, "credential");
+  if (reason) {
+    deny(reason, "credential");
+    return;
+  }
+  // A guard that is OFF must say so where the agent and the operator can read it. v0.3.0 shipped
+  // without hooks/rules/ in the tarball: every install ran this hook with no rules, it failed open
+  // with a fire of kind "error" that nobody was looking at, and `doctor` on a clean machine was the
+  // only thing that noticed. The fail-open stays (a broken rules file must not brick every edit);
+  // the silence does not.
+  const loaded = rules();
+  if (loaded.error && TOOLS.test(ev?.tool_name || "") && process.env.CLAUDE_HOOKS_QUIET !== "1") {
+    process.stdout.write(
+      JSON.stringify({
+        systemMessage: `secret-write-guard is OFF: its rules file could not be loaded (${loaded.error}). Restore hooks/rules/secrets.json or set SECRET_GUARD_RULES; until then nothing is scanned for credentials.`,
+      }),
+    );
+  }
   // exit naturally so stdout drains
 }
 

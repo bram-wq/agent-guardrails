@@ -422,5 +422,17 @@ const backups = (dir) =>
   check("--help lists every command", ["init", "uninstall", "doctor", "try", "new", "report", "demo"].every((c) => new RegExp(`^  ${c} `, "m").test(h)), h);
 }
 
+// ── the tarball carries every file init copies ───────────────────────────────────────────────────
+// v0.3.0 shipped without hooks/rules/ in `files`: `npx github:…#v0.3.0 init` installed
+// secret-write-guard with no rules file, the guard failed open, and `doctor` on a clean machine was
+// the only thing that noticed. The packed list is what a user gets; assert it, do not assume it.
+{
+  const pack = spawnSync("npm", ["pack", "--dry-run", "--json"], { cwd: ROOT, encoding: "utf8", shell: process.platform === "win32" });
+  let names = null;
+  try { names = JSON.parse(pack.stdout)[0].files.map((f) => f.path); } catch {}
+  check("npm pack --dry-run --json parses", Array.isArray(names), pack.stdout.slice(0, 200) + pack.stderr.slice(0, 200));
+  for (const f of SHIPPED) check(`the tarball carries hooks/${f}`, !!names && names.includes(`hooks/${f}`), names ? names.filter((n) => n.startsWith("hooks/")).join(",") : "no list");
+}
+
 console.log(fails ? `\n[agent-guardrails.test] ${fails} FAILED.` : "\n[agent-guardrails.test] all cases passed.");
 process.exit(fails ? 1 : 0);
