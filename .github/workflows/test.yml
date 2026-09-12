@@ -1,0 +1,11 @@
+name: guard tests
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: for t in hooks/*.test.mjs; do echo "== $t"; node "$t" || exit 1; done
+      - run: node demo.mjs

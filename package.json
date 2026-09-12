@@ -1,0 +1,12 @@
+{
+  "name": "claude-code-guard-hooks-showcase",
+  "private": true,
+  "type": "module",
+  "description": "Deterministic PreToolUse/Stop guard hooks for Claude Code, each with a must-fire and a must-not-fire test.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "for f in hooks/*.test.mjs; do echo \"=== $f\"; node \"$f\" || exit 1; done"
+  }
+}
