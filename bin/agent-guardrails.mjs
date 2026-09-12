@@ -25,6 +25,7 @@ import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
+import { isDeepStrictEqual } from "node:util";
 
 const PKG_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const PKG_HOOKS = join(PKG_ROOT, "hooks");
@@ -44,6 +45,7 @@ const USAGE = `agent-guardrails <command> [options]
              locally modified hook and every foreign entry are kept (--user, --dry-run, --agent as above)
   doctor     check node version, that each installed hook parses, allows an event of its OWN type,
              and REFUSES its known incident; and that every hook settings.json references exists
+             --strict also require every shipped event/matcher/command registration unchanged
              (--user for ~/.claude)
   try        \`try '<bash command>'\` — run the command through every Bash guard without a session:
              one line per guard (DENY / warn / allow); exit 1 if any guard denies
@@ -756,6 +758,19 @@ function doctor(flags) {
       fail(`${settingsPath}: not valid JSON (${e.message})`);
     }
     if (settings) {
+      if (flags.has("--strict")) {
+        const expected = exampleHooksFor(hooksDir, flags.has("--user")).block;
+        for (const [event, groups] of Object.entries(expected)) {
+          for (const group of groups) {
+            for (const hook of group.hooks) {
+              const present = (settings.hooks?.[event] ?? []).some(actualGroup =>
+                (actualGroup.matcher ?? "") === (group.matcher ?? "") &&
+                (actualGroup.hooks ?? []).some(actual => isDeepStrictEqual(actual, hook)));
+              if (!present) fail(`missing shipped registration: ${event}/${group.matcher ?? "*"} → ${hookBasename(hook)}`);
+            }
+          }
+        }
+      }
       const referenced = new Set();
       for (const groups of Object.values(settings.hooks ?? {}))
         for (const g of groups)

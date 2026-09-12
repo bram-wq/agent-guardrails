@@ -1,15 +1,17 @@
 # agent-guardrails
 
-**Deterministic guard hooks for Claude Code that let a coding agent run unattended without lying,
-looping, filling a disk, or pressing the one button that cannot be un-pressed.**
+**Deterministic hooks that catch tested classes of unsafe coding-agent actions before execution.**
+
+For Claude Code, with a Codex adapter. Incident-derived rules, executable legitimate-action controls,
+and explicit bypass limits. A safety layer for agent workflows—not a sandbox or a guarantee of correctness.
 
 [![guard tests](https://github.com/bram-wq/agent-guardrails/actions/workflows/test.yml/badge.svg)](https://github.com/bram-wq/agent-guardrails/actions/workflows/test.yml)
 ![node](https://img.shields.io/badge/node-%E2%89%A520-brightgreen) ![deps](https://img.shields.io/badge/dependencies-0-blue) ![license](https://img.shields.io/badge/license-MIT-lightgrey)
 
-Ten hooks (eight lifted from production, two built from a survey of the field), 1,712 test cases, zero dependencies, one-command install and uninstall.
+Ten guards plus a pre-compaction handoff hook, zero dependencies, one-command install and uninstall.
 Every guard has a must-fire test (the incident, verbatim) and a must-not-fire test (its legitimate
-twin), because a guard that blocks real work gets switched off within a week. The test total on this
-page is printed by the runner, not typed.
+twin), because false positives make protection difficult to keep enabled. Run `npm test` for the
+current suite and case counts; published counts go stale as controls are added.
 
 ![node demo.mjs: each guard fed the incident and its legitimate twin](assets/demo.svg)
 
@@ -25,6 +27,14 @@ npx github:bram-wq/agent-guardrails#v0.4.0 demo
 verdict. Pin the tag; an unpinned `github:` install tracks whatever is on `main` today.
 
 ## Install
+
+In the unreleased source checkout, `node bin/agent-guardrails.mjs doctor --strict` checks every shipped
+event, matcher, command, argument list, filter and timeout. Missing or misrouted registrations fail.
+Default `doctor` remains suitable for intentionally customized installations. Strict mode verifies
+configuration and standalone hook behavior, not execution by the agent host.
+
+For a technical evaluation, start with the [engineering review](docs/ENGINEERING-REVIEW.md):
+the execution boundary, reproducible checks, findings repaired, and remaining limits.
 
 ```bash
 npx github:bram-wq/agent-guardrails#v0.4.0 init       # copies hooks/ into ./.claude/hooks/, merges settings.json (backup first)
@@ -66,9 +76,10 @@ unjudged. Not covered: `doctor`. Every fact relied on, with its source and date:
 | `precompact-handoff` | PreCompact | Nothing. Before a compaction it writes a durable handoff (goal, DONE command, proven or not, the last ten refusals, timestamp) under the state dir, so the summary cannot lose them; goal-guard's SessionStart re-injects the goal after the compaction. Never blocks. | `HOOK_STATE_DIR`, `HOOK_FIRE_LOG` |
 | `root-cause-guard` | PreToolUse · Bash (warn only) | A commit or PR message that quotes a runtime error and claims a fix while naming no stack frame, artifact offset, or query count. Warns through `additionalContext`, the channel Claude actually reads; never blocks. | — |
 
-Every guard: decides in milliseconds from the event alone, fails **open** on its own bugs (a guard
-that bricks a session gets switched off, which is worse than no guard), fails **closed** on input too
-large to scan, prints a reason that carries the fix, and records that it ran and whether it fired.
+Hooks have different failure policies: errors generally fail **open**, and Stop hooks also allow
+oversized events. Do not assume a missing refusal means a successful inspection. Several guards read
+project files or state in addition to the event. See the per-hook limits before treating a result as
+an enforcement guarantee.
 Per-guard fields and stdout shapes, verified against the hooks reference on 2026-09-12:
 [`docs/COMPAT.md`](docs/COMPAT.md). Cost per call, measured: [`docs/BENCH.md`](docs/BENCH.md).
 
@@ -87,11 +98,11 @@ Read on 2026-09-12; star counts from that day. The others are good; pick by what
 
 | If you need | Use | Because |
 |---|---|---|
-| The same command analyzer across Codex, Cursor, Gemini, Copilot and nine more harnesses | [claude-code-safety-net](https://github.com/kenryu42/claude-code-safety-net) (1.5k stars) | Breadth is its design goal. This repo targets Claude Code's hook contract only, and says so. |
+| The same command analyzer across many agent harnesses | [claude-code-safety-net](https://github.com/kenryu42/claude-code-safety-net) (1.5k stars at the survey date) | Breadth is its design goal. This repo focuses on Claude Code with a Codex adapter. |
 | A plugin-marketplace bundle of everyday hooks (dangerous commands, protect tests, config guard) | [claude-code-hooks](https://github.com/karanb192/claude-code-hooks) (509 stars) | A wider grab bag. This repo ships fewer guards, each with the incident that produced it. |
 | A gitleaks engine with output redaction and CI integration | [agent-guard](https://github.com/JeongJaeSoon/agent-guard) | It wraps the real gitleaks binary. `secret-write-guard` here vendors 15 rules as JSON with no binary and no dependency. |
 | A real boundary against an agent that wants out | [`@anthropic-ai/sandbox-runtime`](https://github.com/anthropic-experimental/sandbox-runtime) (5.2k stars), managed settings, a separate identity | Hooks run as your user from files the agent can edit. Anthropic's own layering is managed settings, then deny rules, then a sandbox, then hooks. `managed-settings.example.json` here is the layer above. |
-| A guard that judges with a model (`prompt` or `agent` hook types, TDD Guard, NeMo) | Not here, by design | A model verdict cannot have a must-fire test, its 30-second timeout fails open, and every false positive on a busy day is an interrupt. Every guard here decides in milliseconds from the event alone. |
+| Semantic review using model judgments | A model-based review or guard system | This project chooses deterministic rules with repeatable local controls. Model systems require separate evaluation of variability, latency and false positives. |
 
 What this repo has that the others do not, as far as the survey found:
 
@@ -99,7 +110,7 @@ What this repo has that the others do not, as far as the survey found:
   `ui-evidence-guard` refuses "done" on a UI branch with no rendered screenshot. The other sets guard
   what the agent *runs*; these two guard what it *claims*.
 - **The incident, verbatim, as the must-fire test, and its legitimate twin as the must-not-fire test.**
-  1,712 cases across ten guards and the Codex adapter, printed by the runner. Mutation-tested by hand: each guard's deny branch
+  Cases across the guards and Codex adapter are counted by the runner. Previously mutation-tested by hand: each guard's deny branch
   was removed and the suite went red.
 - **Fire logs with denominators.** `report` prints runs, fires and rate per hook per project, so a guard
   is pruned on a count, never on an opinion. `piped-verdict-guard` was narrowed from every piped command
@@ -134,13 +145,16 @@ write can truncate a deny into an allow on Windows), telemetry, and MUST FIRE / 
 ## Run the tests
 
 ```sh
-node test.mjs                      # every suite, plain Node, no install; prints the case total the README quotes
+node test.mjs                      # enumerates every suite, plain Node; prints measured counts
 node hooks/fence-guard.test.mjs    # one suite
 node scripts/bench.mjs             # p50/p95 per hook against bare Node startup
+npm run test:package               # offline install of the actual tarball, strict doctor, uninstall
+node scripts/bench.mjs --json      # raw samples and configuration fingerprint
 ```
 
-CI runs the suite, the demo and a dry-run install on ubuntu, macOS and Windows, Node 20 and 22.
-Requires Node 20+ and `git` on PATH (for the real-repo cases).
+CI is configured to run the suite, demo, dry-run install and packaged-install smoke on Ubuntu,
+macOS and Windows, Node 20, 22 and 24. A configured matrix is not a claim that a pending run passed.
+Requires Node 20+, npm and `git` on PATH (for the package and real-repo cases).
 
 ## Where these ran
 

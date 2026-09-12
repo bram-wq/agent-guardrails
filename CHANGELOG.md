@@ -3,6 +3,24 @@
 All notable changes to this project are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org).
 
+## [Unreleased]
+
+### Added
+
+- `doctor --strict`: checks complete shipped registrations, including event/matcher routing and
+  handler options. Disconnected files, changed commands and asynchronous replacements refuse.
+- Configuration-derived benchmark coverage and `--json` receipts with raw samples, configuration
+  SHA256, environment and sample counts; each child has a bounded timeout.
+- Offline packaged-install smoke test: pack, install, init, strict doctor and uninstall. CI exercises
+  it on Linux/macOS/Windows with Node 20/22/24, using read-only repository permissions.
+
+### Fixed
+
+- Scratch allocation no longer sweeps old sibling directories. A live owner's directory can be old;
+  a two-process regression test reproduces that deletion. Own-process cleanup remains automatic.
+- Performance documentation labels the old seven-hook benchmark as historical; the installed Bash
+  configuration has seven guards, not four. README protection and input-limit claims are bounded.
+
 ## [0.4.0] — 2026-09-12
 
 ### Added

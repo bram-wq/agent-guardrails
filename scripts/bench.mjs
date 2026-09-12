@@ -12,50 +12,54 @@
 // Runs are tagged HOOK_CTX=test and pointed at a throwaway fire log and state dir, so a bench never
 // inflates the live denominator that `agent-guardrails report` reads.
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir, platform, release, arch } from "node:os";
+import { rmSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { platform, release, arch } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { performance } from "node:perf_hooks";
+import { scratchDir } from "../hooks/_scratch-dir.mjs";
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const HOOKS = join(ROOT, "hooks");
 const argv = process.argv.slice(2);
 const nIdx = argv.indexOf("--n");
 const N = nIdx === -1 ? 30 : Number(argv[nIdx + 1]);
+for (let i = 0; i < argv.length; i++) {
+  if (argv[i] === "--n") { i++; continue; }
+  if (argv[i] !== "--json") {
+    console.error(`bench: unknown option ${argv[i]}`);
+    process.exit(1);
+  }
+}
 if (!Number.isInteger(N) || N < 1) {
   console.error("bench: --n must be a positive integer");
   process.exit(1);
 }
 
-const cwd = process.cwd();
+const scratch = scratchDir("agent-guardrails-bench");
+const cwd = scratch;
 const base = { session_id: "bench", transcript_path: "", cwd };
 const bash = (command) => ({ ...base, hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command } });
 
-// One benign event per hook, of the event type that hook is registered on in settings.example.json.
-const CASES = [
-  { hook: "prose-guard.mjs", event: "PreToolUse·Bash", ev: bash("npm test") },
-  { hook: "runaway-guard.mjs", event: "PreToolUse·Bash", ev: bash("npm test") },
-  { hook: "piped-verdict-guard.mjs", event: "PreToolUse·Bash", ev: bash("npm test | tail -5") },
-  { hook: "root-cause-guard.mjs", event: "PreToolUse·Bash", ev: bash("git commit -m 'docs: bench'") },
-  {
-    hook: "scope-guard.mjs",
-    event: "PreToolUse·Edit",
-    ev: { ...base, hook_event_name: "PreToolUse", tool_name: "Edit", tool_input: { file_path: join(cwd, "README.md") } },
-  },
-  {
-    hook: "ui-evidence-guard.mjs",
-    event: "Stop",
-    ev: { ...base, hook_event_name: "Stop", stop_hook_active: false, last_assistant_message: "Still looking." },
-  },
-  {
-    hook: "goal-guard.mjs",
-    event: "Stop",
-    ev: { ...base, hook_event_name: "Stop", stop_hook_active: false, last_assistant_message: "Still looking." },
-  },
-];
-
-const scratch = mkdtempSync(join(tmpdir(), "agent-guardrails-bench-"));
+// Enumerate registrations, not a second hand-maintained list of guard names.
+// For write-tool alternatives we sample Edit only; this is startup/common-path cost,
+// not a coverage claim about every tool or every rule within a guard.
+const configuration = readFileSync(join(ROOT, "settings.example.json"));
+const CASES = Object.entries(JSON.parse(configuration).hooks).flatMap(([event, groups]) =>
+  groups.flatMap(group => group.hooks.map(registration => {
+    const tool = event === "PreToolUse" ? group.matcher.split("|")[0] : null;
+    const hook = registration.args[0].split("/").at(-1);
+    if (registration.command !== "node" || !/^[\w-]+\.mjs$/.test(hook))
+      throw new Error(`bench: unsupported registration for ${event}`);
+    const ev = tool === "Bash" ? bash("npm test") : {
+      ...base, hook_event_name: event, stop_hook_active: false,
+      last_assistant_message: "Still looking.",
+      ...(tool ? { tool_name: tool, tool_input: { file_path: join(cwd, "README.md") } } : {}),
+    };
+    return { hook, ev, event: tool ? `${event}·${tool}` : event };
+  })),
+);
 const env = {
   ...process.env,
   HOOK_CTX: "test",
@@ -66,10 +70,15 @@ delete env.CLAUDE_HOOKS_QUIET; // a quiet session would measure an early return,
 
 function timeOnce(args, input) {
   const t0 = performance.now();
-  const r = spawnSync(process.execPath, args, { input, encoding: "utf8", env, cwd });
+  const r = spawnSync(process.execPath, args, { input, encoding: "utf8", env, cwd, timeout: 15000 });
   const ms = performance.now() - t0;
   if (r.error) throw r.error;
   if (r.status !== 0) throw new Error(`${args.join(" ")} exited ${r.status}: ${r.stderr}`);
+  if (r.stdout.trim()) {
+    const response = JSON.parse(r.stdout);
+    if (response.decision === "block" || response.hookSpecificOutput?.permissionDecision === "deny")
+      throw new Error(`bench: benign event was refused by ${args[0]}`);
+  }
   return ms;
 }
 
@@ -83,7 +92,7 @@ function sample(label, args, input) {
   const t = [];
   for (let i = 0; i < N; i++) t.push(timeOnce(args, input));
   t.sort((a, b) => a - b);
-  return { label, p50: percentile(t, 50), p95: percentile(t, 95), min: t[0], max: t[t.length - 1] };
+  return { label, samples: t, p50: percentile(t, 50), p95: percentile(t, 95), min: t[0], max: t[t.length - 1] };
 }
 
 const rows = [];
@@ -96,6 +105,15 @@ try {
 }
 
 const baseline = rows[0].p50;
+if (argv.includes("--json")) {
+  console.log(JSON.stringify({
+    schemaVersion: 1, measuredAt: new Date().toISOString(),
+    configurationSha256: createHash("sha256").update(configuration).digest("hex"),
+    node: process.version, platform: platform(), release: release(), arch: arch(),
+    samplesPerRow: N, warmupsPerRow: 1, unit: "milliseconds", rows,
+  }, null, 2));
+  process.exit(0);
+}
 const f = (x) => x.toFixed(1);
 console.log(`command: node scripts/bench.mjs${nIdx === -1 ? "" : ` --n ${N}`}`);
 console.log(`date: ${new Date().toISOString().slice(0, 10)} · os: ${platform()} ${release()} ${arch()} · node: ${process.version} · N=${N} per row (+1 warm-up)`);
@@ -109,5 +127,5 @@ const bashSum = bashRows.reduce((a, r) => a + r.p50, 0);
 console.log("");
 console.log(
   `Bash tool call, sum of the ${bashRows.length} Bash-matched guards' p50 if run serially: ${f(bashSum)} ms; ` +
-    `Claude Code runs matching hooks in parallel, so the wall cost is nearer the slowest (${f(Math.max(...bashRows.map((r) => r.p50)))} ms) plus ${bashRows.length} Node starts of CPU.`,
+    `This is not measured host latency: parallel scheduling and resource contention are not modeled.`,
 );
