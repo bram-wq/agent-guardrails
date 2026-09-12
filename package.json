@@ -1,12 +1,47 @@
 {
-  "name": "claude-code-guard-hooks-showcase",
-  "private": true,
+  "name": "agent-guardrails",
+  "version": "0.1.0",
   "type": "module",
-  "description": "Deterministic PreToolUse/Stop guard hooks for Claude Code, each with a must-fire and a must-not-fire test.",
+  "description": "Deterministic PreToolUse/Stop guard hooks for Claude Code, each with a must-fire and a must-not-fire test. Zero dependencies.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bram-wq/agent-guardrails.git"
+  },
+  "homepage": "https://github.com/bram-wq/agent-guardrails#readme",
+  "bugs": {
+    "url": "https://github.com/bram-wq/agent-guardrails/issues"
+  },
+  "keywords": [
+    "claude-code",
+    "hooks",
+    "guardrails",
+    "coding-agents",
+    "agent-safety",
+    "pretooluse",
+    "deterministic",
+    "zero-dependencies"
+  ],
+  "bin": {
+    "agent-guardrails": "bin/agent-guardrails.mjs"
+  },
+  "files": [
+    "bin/agent-guardrails.mjs",
+    "hooks/*.mjs",
+    "!hooks/*.test.mjs",
+    "demo.mjs",
+    "settings.example.json",
+    "docs/",
+    "assets/",
+    "CHANGELOG.md",
+    "SECURITY.md"
+  ],
   "engines": {
     "node": ">=20"
   },
   "scripts": {
-    "test": "for f in hooks/*.test.mjs; do echo \"=== $f\"; node \"$f\" || exit 1; done"
+    "test": "node test.mjs",
+    "demo": "node demo.mjs",
+    "render:svg": "node scripts/render-demo-svg.mjs"
   }
 }

@@ -91,8 +91,8 @@ function main() {
     process.exit(0); // fail-open: a guard that crashes must not block the session
   }
   const cmd = String(ev?.tool_input?.command ?? "");
-  // A commit, or a merge/pull request opened from the CLI (GitLab `glab`, GitHub `gh`).
-  if (!/git\s+commit|glab\s+mr\s+create|gh\s+pr\s+create/.test(cmd))
+  // A commit, or a pull/merge request opened from a forge CLI (`gh pr create`, or any `<cli> mr create`).
+  if (!/git\s+commit|\b\w+\s+(?:mr|pr)\s+create\b/.test(cmd))
     process.exit(0);
 
   const v = verdict(cmd);

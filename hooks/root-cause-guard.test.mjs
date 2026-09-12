@@ -65,7 +65,7 @@ check(
 check("a classic `at file:line:col` frame counts, any extension", () => {
   assert.equal(
     verdict(
-      `glab mr create --description "Cannot read properties of undefined — at renderRow (Table.tsx:88:12)"`,
+      `gh pr create --body "Cannot read properties of undefined — at renderRow (Table.tsx:88:12)"`,
     ).fire,
     false,
   );

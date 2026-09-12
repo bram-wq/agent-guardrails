@@ -1,19 +1,63 @@
 # agent-guardrails
 
+**Deterministic guard hooks that let coding agents (Claude Code, Codex) run unattended without lying,
+looping, or filling a disk.**
+
 [![guard tests](https://github.com/bram-wq/agent-guardrails/actions/workflows/test.yml/badge.svg)](https://github.com/bram-wq/agent-guardrails/actions/workflows/test.yml)
 ![node](https://img.shields.io/badge/node-%E2%89%A520-brightgreen) ![deps](https://img.shields.io/badge/dependencies-0-blue) ![license](https://img.shields.io/badge/license-MIT-lightgrey)
 
-**Deterministic guard hooks that let coding agents (Claude Code, Codex) run unattended without lying,
-looping, or filling a disk.** Six production hooks, 184 test cases, zero dependencies. Every guard has a
+Seven production hooks, 337 test cases, zero dependencies. Every guard has a
 must-fire test (the incident, verbatim) and a must-not-fire test (its legitimate twin), because a guard
 that blocks real work gets switched off within a week.
+
+![node demo.mjs: each guard fed the incident and its legitimate twin](assets/demo.svg)
+
+## Install in 30 seconds
+
+```bash
+npx github:bram-wq/agent-guardrails init      # copies hooks/ into ./.claude/hooks/, merges settings.json (backup first)
+npx github:bram-wq/agent-guardrails doctor    # every installed hook parses and answers the stdin contract
+npx github:bram-wq/agent-guardrails report    # per-hook runs / fires / fire-rate, with the denominator
+```
+
+`init` is idempotent and never clobbers hooks you already have; add `--user` to target `~/.claude`
+instead of the project, `--dry-run` to see the plan and write nothing. Nothing is installed into
+`node_modules` — the hooks are plain files you own from then on.
+
+| command | does |
+|---|---|
+| `init [--user] [--dry-run]` | copy `hooks/*.mjs`, merge the `hooks` block from [`settings.example.json`](settings.example.json) into `settings.json` after writing a timestamped backup |
+| `doctor [--user]` | Node ≥ 20; each hook parses and exits 0 on a benign event; every path `settings.json` references exists |
+| `report` | table from the fire log: runs, fires, rate per hook — and `never ran` kept distinct from `ran, never fired` |
+| `demo` | runs `demo.mjs` |
+
+### The one to start with: goal-guard
+
+The write-up says to begin with the Stop hook that refuses "done" without a command and its output.
+This is that hook. `init` wires it; by hand:
+
+```json
+"SessionStart": [{ "hooks": [{ "type": "command", "command": "node",
+  "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/goal-guard.mjs"], "timeout": 10 }] }],
+"Stop":         [{ "hooks": [{ "type": "command", "command": "node",
+  "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/goal-guard.mjs"], "timeout": 15 }] }]
+```
+
+```sh
+node .claude/hooks/goal-guard.mjs --set "the flaky suite passes 3 runs in a row" --done "npm test"
+node .claude/hooks/goal-guard.mjs --prove     # runs `npm test`, records the real exit code; Stop blocks a completion claim until it is 0
+node .claude/hooks/goal-guard.mjs --status    # exit 0 = proven · --clear when the goal is met
+```
+
+State lives in `$XDG_STATE_HOME/claude-hooks/goals/<worktree>/` (override: `HOOK_STATE_DIR`). With no goal
+set the hook never fires; setting a goal is the act that arms it.
 
 ## 60-second demo
 
 ```bash
 git clone https://github.com/bram-wq/agent-guardrails && cd agent-guardrails
 node demo.mjs      # feeds each guard the JSON Claude Code sends a hook, twice: the bad command and its twin
-npm test           # 184 cases across six suites, plain Node, no install step
+npm test           # 337 cases across seven suites plus the CLI, plain Node, no install step
 ```
 
 ```
@@ -37,7 +81,7 @@ from that system, as measured in September 2026:
 
 | | |
 |---|---|
-| Guard hooks in production | 50 (48 with paired tests); these six are the most portable |
+| Guard hooks in production | 50 (48 with paired tests); these seven are the most portable |
 | CI gate scripts | 340, each with its own test |
 | Merges landed with no human in the merge loop | 2,180+ |
 | Merged changes per day at peak | 83, at USD 1.15 of CI cost each, attributed per merge |
@@ -62,7 +106,7 @@ The doctrine behind all of it is in [`docs/DOCTRINE.md`](docs/DOCTRINE.md). The 
 
 ## Details
 
-Six deterministic [Claude Code hooks](https://docs.anthropic.com/en/docs/claude-code/hooks) that
+Seven deterministic [Claude Code hooks](https://docs.anthropic.com/en/docs/claude-code/hooks) that
 refuse unsafe or unevidenced agent actions, with the tests that keep them honest. Extracted from a
 production agent fleet and sanitised; the logic and the tests are unchanged.
 
@@ -104,14 +148,16 @@ worst false positive available.
 | `root-cause-guard` | PreToolUse · Bash (warn only) | A commit or PR message that quotes a runtime error (`TypeError: …`) and claims a fix while naming no stack frame, artifact offset, or query count — a fix aimed by theory instead of by evidence. Prompts on stderr; never blocks. |
 | `scope-guard` | PreToolUse · Edit/Write | An edit outside the path globs a task declared in `.agent-scope` (opt-in; `deny` beats `allow`). Resolves the governing worktree from the *target path*, so parallel lanes in sibling worktrees are actually enforced. |
 | `ui-evidence-guard` | Stop | A turn that says "done / fixed / shipped" while the branch diff touches user-visible files and `.evidence/` holds no real screenshot (image type, > 5 KB) newer than the newest UI commit. Anchors to content author-time so rebases and branch splits cannot manufacture or destroy evidence. |
+| `goal-guard` | SessionStart · Stop | A turn that asserts completion (a line opening with `result:`, `DONE`, `Done.` or `verified complete`) while the armed goal's stopping command has never been recorded exiting 0. Opt-in: `--set` an objective with a `--done` command; `--prove` runs that command and stamps the **real** exit code; SessionStart re-injects the goal so it survives `/clear`, resume and compaction. State is keyed per git worktree, so two parallel lanes cannot prove each other's goals. The stopping command must be a read-only verification shape (`npm test`, `npm run <test|lint|typecheck|check:*|verify:*|gate:*|ci:*>`, `node <file>.mjs`, `npx vitest`, composed only with `&&`), and a small denylist (`rm -rf`, `git push --force`, `DROP TABLE`, …) refuses the obviously destructive at both `--set` and `--prove`. |
 
 Two helpers: `_fire-log.mjs` (run/fire telemetry, secret-safe by construction: it records a
 source-authored `kind`, never the reason text) and `_scratch-dir.mjs` (self-reaping temp dirs for
 the tests).
 
-## Install
+## Install (by hand)
 
-Copy `hooks/*.mjs` into `.claude/hooks/` in your project and add the block from
+`npx github:bram-wq/agent-guardrails init` does the following for you. To do it manually:
+copy `hooks/*.mjs` into `.claude/hooks/` in your project and add the block from
 [`settings.example.json`](settings.example.json) to `.claude/settings.json`. A minimal wiring for
 two of them:
 
@@ -157,9 +203,12 @@ Plain Node, no framework — a hook must be verifiable by `node <file>` alone, b
 no test runner exists. Requires Node 20+ and `git` on PATH (for `ui-evidence-guard`'s real-repo cases).
 
 ```sh
-npm test                                   # every suite, stops on the first red
+node test.mjs                              # every suite (hooks + CLI), stops on the first red; `npm test` is the same
 node hooks/piped-verdict-guard.test.mjs    # one suite
 ```
+
+CI runs `node test.mjs`, `node demo.mjs` and `node bin/agent-guardrails.mjs init --dry-run` on
+ubuntu, macOS and Windows, Node 20 and 22.
 
 Each suite prints one line per case, marked `FIRE`/`ALLOW` (or `MUST FIRE`/`MUST NOT FIRE`), and a
 final summary line. The `piped-verdict-guard` suite also asserts a complexity budget: adversarial
