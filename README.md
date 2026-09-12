@@ -83,9 +83,9 @@ from that system, as measured in September 2026:
 |---|---|
 | Guard hooks in production | 50 (48 with paired tests); these seven are the most portable |
 | CI gate scripts | 340, each with its own test |
-| Merges landed with no human in the merge loop | 2,180+ |
+| Merges landed with no human in the merge loop | 2,276 (measured 2026-09-12) |
 | Merged changes per day at peak | 83, at USD 1.15 of CI cost each, attributed per merge |
-| Architecture decision records | 47 |
+| Architecture decision records | 53 |
 
 ```mermaid
 flowchart LR
