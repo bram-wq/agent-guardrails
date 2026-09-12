@@ -18,7 +18,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { writeFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { scratchDir } from "./_scratch-dir.mjs";
 
@@ -660,7 +660,7 @@ const doneOk = (dir) => exitScript(dir, 0);
   check("FIRE  ★ two worktrees resolve two DIFFERENT goal files", fileA !== fileB ? "distinct" : `same: ${fileA}`, "distinct");
   check(
     "FIRE  the goal lives under $XDG_STATE_HOME/claude-hooks/goals/<slug>/",
-    fileA.startsWith(join(state, "claude-hooks", "goals") + "/") ? "xdg-keyed" : fileA,
+    fileA.startsWith(join(state, "claude-hooks", "goals") + sep) ? "xdg-keyed" : fileA,
     "xdg-keyed",
   );
   check(
