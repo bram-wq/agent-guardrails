@@ -30,6 +30,24 @@ guard uses exit 2. No guard reads `transcript_path`. Fire telemetry goes to
 `$XDG_STATE_HOME/claude-hooks/hook-fires.log` (`HOOK_FIRE_LOG` overrides); goal state to
 `…/claude-hooks/goals/<worktree>/` (`HOOK_STATE_DIR` overrides).
 
+## Codex CLI adapter (`hooks/adapters/codex.mjs`)
+
+The same guards under OpenAI Codex CLI's hooks. Facts and their sources: [CODEX.md](CODEX.md)
+(read 2026-09-12); anything tagged NE there is not depended on.
+
+| Codex event · matcher (written by `init --agent codex`) | stdin fields consumed | guards spawned | stdout on a finding | exit | stdin cap |
+|---|---|---|---|---|---|
+| PreToolUse · `^Bash$` | `hook_event_name`, `tool_name`, `tool_input.command`, `cwd` (passed through unchanged — same names as Claude Code) | fence, prose, runaway, piped-verdict, root-cause, secret-write, config-tamper | one `hookSpecificOutput.permissionDecision: "deny"` with every denying guard's reason joined; `additionalContext` when only root-cause-guard spoke | 0 | 8 MiB, **deny** above (fails closed) |
+| PreToolUse · `^apply_patch$` | `tool_input.command` (the patch text) split into one synthetic `Write`/`Edit` event per `*** Add/Update/Delete File:` header, paths resolved against `cwd` | scope, secret-write, config-tamper — each on every file | same deny shape | 0 | 8 MiB, **deny** above; a patch with no recognisable header → allow (CODEX.md F21) |
+| Stop (no matcher) | `stop_hook_active`, `last_assistant_message` (passed through) | ui-evidence, goal | top-level `{"decision":"block","reason"}` | 0 | 8 MiB, **allow** above (a block here would loop) |
+| SessionStart (no matcher) | `source`, `cwd` (passed through) | goal, config-tamper | `hookSpecificOutput.additionalContext` | 0 | 8 MiB, allow above |
+| PreCompact (no matcher) | `trigger`, `custom_instructions` (passed through) | precompact-handoff | nothing (the handoff is a file) | 0 | 8 MiB, allow above |
+
+Adapter: unparseable stdin, an unknown event or tool, a guard that exits non-zero or prints
+non-JSON, or an internal exception → exit 0, empty stdout, the cause on stderr (fail open). One
+stdout write, natural exit, never exit 2. `try --agent codex` runs the Codex-shaped event through
+the adapter one guard at a time and prints the same table as `try`.
+
 ## Contract semantics relied on
 
 | semantic | reference text (2026-09-12) | relied on by |

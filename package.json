@@ -28,6 +28,7 @@
   "files": [
     "bin/agent-guardrails.mjs",
     "hooks/*.mjs",
+    "hooks/adapters/codex.mjs",
     "hooks/rules/",
     "!hooks/*.test.mjs",
     "demo.mjs",

@@ -37,14 +37,17 @@ const USAGE = `agent-guardrails <command> [options]
   init       copy the hooks into .claude/hooks/ and merge the hooks block into .claude/settings.json
              --user      target ~/.claude instead of ./.claude
              --dry-run   print what would change; write nothing
+             --agent codex   target OpenAI Codex CLI instead: hooks into .codex/hooks/ (with the
+                         adapter) and the entries into .codex/hooks.json — see docs/CODEX.md
   uninstall  remove ONLY the hook entries init added from settings.json (timestamped backup first)
              and delete copied hook files that are still byte-identical to the shipped copy; a
-             locally modified hook and every foreign entry are kept (--user, --dry-run as above)
+             locally modified hook and every foreign entry are kept (--user, --dry-run, --agent as above)
   doctor     check node version, that each installed hook parses, allows an event of its OWN type,
              and REFUSES its known incident; and that every hook settings.json references exists
              (--user for ~/.claude)
   try        \`try '<bash command>'\` — run the command through every Bash guard without a session:
              one line per guard (DENY / warn / allow); exit 1 if any guard denies
+             --agent codex   feed the Codex-shaped event through the adapter instead; same table
   new        \`new <name>\` — scaffold hooks/<name>.mjs and hooks/<name>.test.mjs from templates/;
              refuses to overwrite
   report     per-hook runs / fires / fire-rate from the fire log, with the denominator — for THIS
@@ -54,19 +57,43 @@ const USAGE = `agent-guardrails <command> [options]
 
 // ── shared ───────────────────────────────────────────────────────────────────────────────────────
 
+const AGENTS = ["claude", "codex"];
+
 function parseArgs(argv) {
   const flags = new Set();
   const positional = [];
-  for (const a of argv) {
-    if (a.startsWith("--")) flags.add(a);
+  let agent = "claude";
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--agent") agent = argv[++i] ?? "";
+    else if (a.startsWith("--agent=")) agent = a.slice("--agent=".length);
+    else if (a.startsWith("--")) flags.add(a);
     else positional.push(a);
   }
-  return { cmd: positional[0], rest: positional.slice(1), flags };
+  return { cmd: positional[0], rest: positional.slice(1), flags, agent };
+}
+
+/**
+ * Where an agent keeps its config: Claude Code in `.claude/` (settings.json), Codex CLI in `.codex/`
+ * (hooks.json — docs/CODEX.md F1–F3). Both have a project form and a `--user` form under $HOME.
+ */
+function agentLayout(agent, flags) {
+  const isUser = flags.has("--user");
+  const base = isUser ? homedir() : process.cwd();
+  if (agent === "codex") {
+    const dir = join(base, ".codex");
+    return { agent, isUser, dir, hooksDir: join(dir, "hooks"), settingsPath: join(dir, "hooks.json"), settingsName: "hooks.json" };
+  }
+  const dir = join(base, ".claude");
+  return { agent, isUser, dir, hooksDir: join(dir, "hooks"), settingsPath: join(dir, "settings.json"), settingsName: "settings.json" };
 }
 
 function targetDir(flags) {
-  return flags.has("--user") ? join(homedir(), ".claude") : join(process.cwd(), ".claude");
+  return agentLayout("claude", flags).dir;
 }
+
+/** The files a Codex install ships beyond the hooks themselves: the adapter that speaks Codex's contract. */
+const CODEX_EXTRA_FILES = ["adapters/codex.mjs"];
 
 /**
  * The shippable files, as paths relative to hooks/: every hooks/*.mjs that is not a test, the helpers
@@ -74,14 +101,15 @@ function targetDir(flags) {
  * without its data file fails OPEN at the install site — secret-write-guard did exactly that in
  * `doctor` on a fresh install until the rules directory rode along.
  */
-function packagedHookFiles() {
+function packagedHookFiles(agent = "claude") {
   const top = readdirSync(PKG_HOOKS)
     .filter((f) => f.endsWith(".mjs") && !f.endsWith(".test.mjs"));
   const rulesDir = join(PKG_HOOKS, "rules");
   const rules = existsSync(rulesDir)
     ? readdirSync(rulesDir).filter((f) => f.endsWith(".json")).map((f) => `rules/${f}`)
     : [];
-  return [...top, ...rules].sort();
+  const extra = agent === "codex" ? CODEX_EXTRA_FILES.filter((f) => existsSync(join(PKG_HOOKS, f))) : [];
+  return [...top, ...rules, ...extra].sort();
 }
 
 /** Guards only: the hooks that are registered in settings (helpers are imported, never run). */
@@ -129,6 +157,45 @@ function exampleHooksFor(hooksDir, isUser) {
     }
     block[event] = groups.filter((g) => g.hooks.length > 0);
     if (block[event].length === 0) delete block[event];
+  }
+  return { block, skipped };
+}
+
+/**
+ * The Codex hooks block, derived from the SAME settings.example.json so the two agents wire the same
+ * guards on the same events. Codex runs a `command` STRING (docs/CODEX.md F4, F13 — no `args` exec form
+ * is documented, and no variable expansion in the command is documented either, so the path is
+ * absolute and quoted), so each Claude group becomes ONE Codex entry that spawns the adapter with
+ * the group's guards; the adapter folds their answers into one decision. Matchers translate: Claude's
+ * `Bash` → `^Bash$`; the Edit family → `^apply_patch$`, Codex's single file-edit tool (F7). An entry
+ * whose guard does not ship is skipped and named, as for Claude.
+ * @returns {{block: object, skipped: string[]}}
+ */
+function codexHooksFor(hooksDir) {
+  const adapter = join(hooksDir, "adapters", "codex.mjs");
+  const shipped = new Set(packagedHookFiles("codex"));
+  const skipped = [];
+  const block = {};
+  const MATCHER = { Bash: "^Bash$", "Edit|MultiEdit|Write|NotebookEdit": "^apply_patch$" };
+  for (const [event, groups] of Object.entries(readJson(EXAMPLE).hooks)) {
+    for (const g of groups) {
+      const guards = [];
+      let timeout = 0;
+      for (const h of g.hooks) {
+        const file = hookBasename(h);
+        if (!file || !shipped.has(file)) {
+          skipped.push(`${event}${g.matcher ? `(${g.matcher})` : ""} → ${file ?? "?"}`);
+          continue;
+        }
+        guards.push(file.replace(/\.mjs$/, ""));
+        timeout = Math.max(timeout, Number(h.timeout) || 0);
+      }
+      if (guards.length === 0) continue;
+      const matcher = g.matcher === undefined ? undefined : (MATCHER[g.matcher] ?? g.matcher);
+      const entry = { type: "command", command: `node "${adapter}" ${guards.join(",")}` };
+      if (timeout) entry.timeout = timeout;
+      (block[event] ??= []).push(matcher === undefined ? { hooks: [entry] } : { matcher, hooks: [entry] });
+    }
   }
   return { block, skipped };
 }
@@ -237,18 +304,15 @@ function timestamp() {
 
 // ── init ─────────────────────────────────────────────────────────────────────────────────────────
 
-function init(flags) {
+function init(flags, agent = "claude") {
   const dry = flags.has("--dry-run");
-  const isUser = flags.has("--user");
-  const dir = targetDir(flags);
-  const hooksDir = join(dir, "hooks");
-  const settingsPath = join(dir, "settings.json");
+  const { isUser, dir, hooksDir, settingsPath } = agentLayout(agent, flags);
   const say = (line) => console.log(`${dry ? "[dry-run] " : ""}${line}`);
 
   // 1. hooks
   let copied = 0;
   let unchanged = 0;
-  for (const f of packagedHookFiles()) {
+  for (const f of packagedHookFiles(agent)) {
     const src = join(PKG_HOOKS, f);
     const dst = join(hooksDir, f);
     const existed = existsSync(dst);
@@ -283,7 +347,7 @@ function init(flags) {
       return 1;
     }
   }
-  const example = exampleHooksFor(hooksDir, isUser);
+  const example = agent === "codex" ? codexHooksFor(hooksDir) : exampleHooksFor(hooksDir, isUser);
   for (const sk of example.skipped) say(`skip    ${sk}  (wired in settings.example.json, but that hook does not ship in hooks/ yet)`);
   const added = mergeHooks(settings, example.block);
   if (added === 0) {
@@ -307,7 +371,11 @@ function init(flags) {
       : `done: ${copied} file(s) ${dry ? "would be " : ""}copied, ${added} hook entr${added === 1 ? "y" : "ies"} ${dry ? "would be " : ""}added.`,
   );
   if (!dry && (copied || added))
-    console.log("Next: `agent-guardrails doctor` to confirm each hook answers, then start a session.");
+    console.log(
+      agent === "codex"
+        ? "Next: `agent-guardrails try --agent codex 'git push origin main'` to see the adapter refuse, then start a Codex session (project hooks load only in a trusted project — docs/CODEX.md F12)."
+        : "Next: `agent-guardrails doctor` to confirm each hook answers, then start a session.",
+    );
   return 0;
 }
 
@@ -325,6 +393,10 @@ function baseEvent(hookEventName, sessionId) {
 }
 function bashEvent(command, sessionId) {
   return { ...baseEvent("PreToolUse", sessionId), tool_name: "Bash", tool_input: { command } };
+}
+/** The same command as Codex CLI sends it (docs/CODEX.md F5–F7): the common fields plus turn and tool ids. */
+function codexBashEvent(command, sessionId) {
+  return { ...bashEvent(command, sessionId), model: "", turn_id: sessionId, tool_use_id: `${sessionId}-1` };
 }
 
 /** Guards that answer Stop / SessionStart / Edit / PreCompact, not a Bash command. Everything else is a Bash guard. */
@@ -383,8 +455,8 @@ function benignEventsFor(file) {
  * verdict: "allow" (empty stdout) · "deny" · "block" · "context" (JSON with additionalContext) ·
  * "json" (other JSON) · "unparseable". A non-empty stderr is kept: a prompt-only guard talks there.
  */
-function runHook(path, event) {
-  const r = spawnSync(process.execPath, [path], {
+function runHook(path, event, extraArgs = []) {
+  const r = spawnSync(process.execPath, [path, ...extraArgs], {
     input: JSON.stringify(event),
     encoding: "utf8",
     timeout: 15_000,
@@ -413,7 +485,7 @@ function runHook(path, event) {
 // synthesises the PreToolUse Bash event and runs it through every Bash guard the package ships —
 // discovered from hooks/ at run time, so a private guard dropped in there is covered too.
 
-function tryCommand(rest) {
+function tryCommand(rest, agent = "claude") {
   const command = rest.join(" ");
   if (!command) {
     console.error("try: give the command as one argument, e.g.  agent-guardrails try 'yes for sure'");
@@ -424,13 +496,20 @@ function tryCommand(rest) {
     console.error(`try: no Bash guards found in ${PKG_HOOKS}`);
     return 2;
   }
-  const event = bashEvent(command, "try");
+  // Under --agent codex the Codex-shaped event goes THROUGH the adapter, one guard per row, so the
+  // table is the verdict a Codex session would get, not the guard's own answer re-labelled.
+  const adapter = join(PKG_HOOKS, "adapters", "codex.mjs");
+  if (agent === "codex" && !existsSync(adapter)) {
+    console.error(`try: the Codex adapter is missing: ${adapter}`);
+    return 2;
+  }
+  const event = agent === "codex" ? codexBashEvent(command, "try") : bashEvent(command, "try");
   let denied = 0;
   let errored = 0;
   const w = Math.max(...guards.map((f) => f.length)) + 1;
   for (const f of guards) {
     const name = `${f}:`.padEnd(w);
-    const r = runHook(join(PKG_HOOKS, f), event);
+    const r = agent === "codex" ? runHook(adapter, event, [f]) : runHook(join(PKG_HOOKS, f), event);
     const first = (s) => s.split("\n").find((l) => l.trim() !== "") ?? "";
     if (r.verdict === "error" || r.status !== 0 || r.verdict === "unparseable") {
       errored++;
@@ -447,6 +526,7 @@ function tryCommand(rest) {
       ? `\n${denied} of ${guards.length} guard(s) would refuse: ${JSON.stringify(command)}`
       : `\nno guard refuses: ${JSON.stringify(command)}`,
   );
+  if (agent === "codex") console.log("(verdicts via hooks/adapters/codex.mjs, the Codex CLI PreToolUse contract — docs/CODEX.md)");
   return denied ? 1 : errored ? 2 : 0;
 }
 
@@ -497,7 +577,10 @@ function scaffold(rest) {
 /** Does a hook entry point at one of OUR files? Matched on the basename at the END of the path. */
 function isShippedEntry(h, shipped) {
   const paths = [h.command, ...(Array.isArray(h.args) ? h.args : [])].filter((s) => typeof s === "string");
-  return paths.some((p) => shipped.some((b) => p === b || p.endsWith(`/${b}`) || p.endsWith(`\\${b}`)));
+  // A Codex entry is one command STRING: `node "<dir>/adapters/codex.mjs" fence-guard,…` — the shipped
+  // basename sits inside it, quoted, followed by the guard list. Matched as a path-terminated token.
+  const inside = (p, b) => new RegExp(`[\\\\/]${b.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}["'\\s]`).test(p);
+  return paths.some((p) => shipped.some((b) => p === b || p.endsWith(`/${b}`) || p.endsWith(`\\${b}`) || inside(p, b)));
 }
 
 /** Strip our entries from settings.hooks in place. Returns how many were removed. */
@@ -521,13 +604,11 @@ function unmergeHooks(settings, shipped) {
   return removed;
 }
 
-function uninstall(flags) {
+function uninstall(flags, agent = "claude") {
   const dry = flags.has("--dry-run");
-  const dir = targetDir(flags);
-  const hooksDir = join(dir, "hooks");
-  const settingsPath = join(dir, "settings.json");
+  const { hooksDir, settingsPath, settingsName } = agentLayout(agent, flags);
   const say = (line) => console.log(`${dry ? "[dry-run] " : ""}${line}`);
-  const shipped = packagedHookFiles();
+  const shipped = packagedHookFiles(agent);
 
   // 1. settings — entries first, so a hook file is never deleted while settings still name it.
   let removed = 0;
@@ -548,7 +629,7 @@ function uninstall(flags) {
       if (!dry) writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
       say(`unmerge ${settingsPath}  (-${removed} hook entr${removed === 1 ? "y" : "ies"}; foreign entries kept)`);
     }
-  } else say(`no settings.json at ${settingsPath}`);
+  } else say(`no ${settingsName} at ${settingsPath}`);
 
   // 2. files — only a copy that still matches the shipped bytes is ours to delete.
   let deleted = 0;
@@ -799,21 +880,30 @@ function demo() {
 // ── main ─────────────────────────────────────────────────────────────────────────────────────────
 
 const parsed = parseArgs(process.argv.slice(2));
-const { flags, rest } = parsed;
+const { flags, rest, agent } = parsed;
 const cmd = parsed.cmd ?? (flags.has("--help") || flags.has("-h") ? "help" : undefined);
 let code;
+if (!AGENTS.includes(agent)) {
+  console.error(`unknown --agent ${JSON.stringify(agent)}: expected one of ${AGENTS.join(", ")}`);
+  process.exitCode = 1;
+} else
 switch (cmd) {
   case "init":
-    code = init(flags);
+    code = init(flags, agent);
     break;
   case "uninstall":
-    code = uninstall(flags);
+    code = uninstall(flags, agent);
     break;
   case "doctor":
+    if (agent !== "claude") {
+      console.error("doctor: only --agent claude is supported; for Codex run `try --agent codex '<cmd>'` (docs/CODEX.md)");
+      code = 1;
+      break;
+    }
     code = doctor(flags);
     break;
   case "try":
-    code = tryCommand(rest);
+    code = tryCommand(rest, agent);
     break;
   case "new":
     code = scaffold(rest);
@@ -835,4 +925,4 @@ switch (cmd) {
     console.error(USAGE);
     code = 1;
 }
-process.exitCode = code;
+process.exitCode = code ?? process.exitCode ?? 1;

@@ -3,6 +3,23 @@
 All notable changes to this project are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org).
 
+## [Unreleased]
+
+### Added
+
+- `hooks/adapters/codex.mjs`: the same guards under OpenAI Codex CLI's lifecycle hooks. Reads
+  Codex's event, fans it out to the named guards, folds their answers into one Codex-shaped decision
+  (any deny holds); `apply_patch` is split into one synthetic Write/Edit event per file so scope-,
+  secret-write- and config-tamper-guard judge every path. Fails open on its own defects, fails closed
+  on an oversize PreToolUse payload. 71 cases: every demo incident denied and every twin allowed
+  through the adapter, garbage/oversize/unknown-event/unknown-tool, crashing and junk-printing guards.
+- `init --agent codex` / `uninstall --agent codex`: `.codex/hooks/` and `.codex/hooks.json`, derived
+  from the same `settings.example.json` (one entry per matcher group; `^Bash$`, `^apply_patch$`);
+  merge, backup, idempotent, round-trips a foreign `hooks.json` byte-for-byte. `try --agent codex`
+  prints the same verdict table through the adapter.
+- `docs/CODEX.md`: the Codex contract, fact by fact with URL and read date; facts that could not be
+  fetched are tagged NE and the adapter does not depend on them.
+
 ## [0.3.1] — 2026-09-12
 
 ### Fixed

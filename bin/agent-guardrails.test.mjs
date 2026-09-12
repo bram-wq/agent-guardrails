@@ -412,6 +412,96 @@ const backups = (dir) =>
   check("if: uninstall removes an entry that carries an `if`", un.code === 0 && !existsSync(join(proj, ".claude", "hooks", "piped-verdict-guard.mjs")) && !JSON.stringify(settingsOf(proj)).includes("piped-verdict-guard"), un.out);
 }
 
+// ── 14. --agent codex: init writes .codex/hooks.json through the adapter; uninstall is symmetric ──
+// The Codex contract (docs/CODEX.md): `<repo>/.codex/hooks.json`, `command` is a STRING, matcher is a
+// regex, Codex's file-edit tool is `apply_patch`. Entries are derived from settings.example.json so the
+// two agents wire the same guards on the same events.
+{
+  const dir = scratchDir("agr-codex");
+  const r = cli(["init", "--agent", "codex"], dir);
+  check("codex: init exits 0", r.code === 0, r.out);
+  check("codex: nothing is written under .claude/", !existsSync(join(dir, ".claude")));
+  const installed = listFiles(join(dir, ".codex", "hooks"));
+  check("codex: every shipped hook file lands under .codex/hooks/, plus the adapter, nothing else",
+    installed.length === SHIPPED.length + 1 && SHIPPED.every((f) => installed.includes(f)) && installed.includes("adapters/codex.mjs"), installed.join(","));
+  let h = null;
+  try { h = JSON.parse(readFileSync(join(dir, ".codex", "hooks.json"), "utf8")); } catch {}
+  check("codex: writes valid .codex/hooks.json", h !== null);
+  const entries = h ? hookEntries(h) : [];
+  const claudeGroups = Object.values(EXAMPLE).flatMap((groups) => groups.filter((g) => g.hooks.some((x) => SHIPPED.includes(entryFile(x))))).length;
+  check(`codex: one entry per Claude matcher group (${claudeGroups}), each a command string, no args array`,
+    entries.length === claudeGroups && entries.every((e) => typeof e.command === "string" && !("args" in e)), JSON.stringify(entries));
+  const adapterPath = join(dir, ".codex", "hooks", "adapters", "codex.mjs");
+  check("codex: every entry spawns the installed adapter by absolute, quoted path", entries.every((e) => e.command.startsWith(`node "${adapterPath}" `)), entries.map((e) => e.command).join("\n"));
+  const bashEntry = h?.hooks?.PreToolUse?.find((g) => g.matcher === "^Bash$")?.hooks?.[0];
+  const editEntry = h?.hooks?.PreToolUse?.find((g) => g.matcher === "^apply_patch$")?.hooks?.[0];
+  check("codex: the Bash group becomes matcher ^Bash$ with every Bash guard", !!bashEntry && /fence-guard,prose-guard,runaway-guard,piped-verdict-guard,root-cause-guard,secret-write-guard,config-tamper-guard$/.test(bashEntry.command), bashEntry?.command);
+  check("codex: the Edit family becomes matcher ^apply_patch$ with the three file guards", !!editEntry && /scope-guard,secret-write-guard,config-tamper-guard$/.test(editEntry.command), editEntry?.command);
+  check("codex: Stop, SessionStart and PreCompact entries carry no matcher", ["Stop", "SessionStart", "PreCompact"].every((ev) => h?.hooks?.[ev]?.length === 1 && !("matcher" in h.hooks[ev][0])), JSON.stringify(h?.hooks));
+  check("codex: timeouts ride through from the example (max of the group)", bashEntry?.timeout === 10 && h?.hooks?.Stop?.[0]?.hooks?.[0]?.timeout === 15, "");
+  check("codex: init prints the trusted-project caveat", /trusted project/.test(r.out), r.out);
+
+  const before = readFileSync(join(dir, ".codex", "hooks.json"), "utf8");
+  const again = cli(["init", "--agent", "codex"], dir);
+  check("codex: second init is idempotent (byte-identical, nothing to do)", again.code === 0 && readFileSync(join(dir, ".codex", "hooks.json"), "utf8") === before && /nothing to do/.test(again.out), again.out);
+  check("codex: --agent=codex form is accepted", cli(["init", "--agent=codex", "--dry-run"], dir).code === 0);
+
+  // the installed adapter answers from its install site, resolving the guards beside it
+  const ev = JSON.stringify({ hook_event_name: "PreToolUse", session_id: "t", cwd: dir, tool_name: "Bash", tool_input: { command: "git push origin main" } });
+  const a = spawnSync(process.execPath, [adapterPath, "fence-guard"], { input: ev, encoding: "utf8", env: { ...process.env, HOOK_CTX: "test" } });
+  check("codex: the INSTALLED adapter denies the fence incident from its install site", a.status === 0 && /"permissionDecision":"deny"/.test(a.stdout), a.stdout + a.stderr);
+
+  const un = cli(["uninstall", "--agent", "codex"], dir);
+  check("codex: uninstall exits 0", un.code === 0, un.out);
+  check("codex: uninstall removes every entry and file it added", readFileSync(join(dir, ".codex", "hooks.json"), "utf8") === "{}\n" && listFiles(join(dir, ".codex", "hooks")).length === 0, un.out);
+  check("codex: uninstall summary counts entries and files", un.out.includes(`${claudeGroups} hook entries removed, ${SHIPPED.length + 1} file(s) deleted, 0 modified file(s) kept`), un.out);
+  check("codex: a backup of hooks.json is written before unmerging", readdirSync(join(dir, ".codex")).some((f) => f.startsWith("hooks.json.bak-")));
+}
+
+// ── 15. --agent codex over a foreign hooks.json: merge keeps theirs, uninstall gives it back ──────
+{
+  const dir = scratchDir("agr-codex-merge");
+  mkdirSync(join(dir, ".codex"), { recursive: true });
+  const mine = {
+    description: "theirs",
+    hooks: {
+      PreToolUse: [{ matcher: "^Bash$", hooks: [{ type: "command", command: "python3 ~/.codex/hooks/policy.py", timeout: 30 }] }],
+      SessionStart: [{ matcher: "startup|resume", hooks: [{ type: "command", command: "python3 ~/.codex/hooks/notes.py" }] }],
+    },
+  };
+  const original = JSON.stringify(mine, null, 2) + "\n";
+  writeFileSync(join(dir, ".codex", "hooks.json"), original);
+  const r = cli(["init", "--agent", "codex"], dir);
+  check("codex-merge: init over a foreign hooks.json exits 0", r.code === 0, r.out);
+  const h = JSON.parse(readFileSync(join(dir, ".codex", "hooks.json"), "utf8"));
+  check("codex-merge: the foreign description survives", h.description === "theirs");
+  const bashGroup = h.hooks.PreToolUse.find((g) => g.matcher === "^Bash$");
+  check("codex-merge: our Bash entry is appended to THEIR ^Bash$ group, theirs first", bashGroup.hooks.length === 2 && bashGroup.hooks[0].command === "python3 ~/.codex/hooks/policy.py", JSON.stringify(bashGroup));
+  check("codex-merge: their matcher-bearing SessionStart group is kept and ours is a separate group", h.hooks.SessionStart.length === 2 && h.hooks.SessionStart[0].matcher === "startup|resume", JSON.stringify(h.hooks.SessionStart));
+  check("codex-merge: a timestamped backup was written", readdirSync(join(dir, ".codex")).filter((f) => f.startsWith("hooks.json.bak-")).length === 1);
+  const un = cli(["uninstall", "--agent", "codex"], dir);
+  check("codex-merge: init then uninstall round-trips hooks.json byte-for-byte", un.code === 0 && readFileSync(join(dir, ".codex", "hooks.json"), "utf8") === original, readFileSync(join(dir, ".codex", "hooks.json"), "utf8"));
+  const dry = cli(["uninstall", "--agent", "codex", "--dry-run"], dir);
+  check("codex-merge: a second uninstall is a no-op", /nothing to do/.test(dry.out) || /0 hook entries removed/.test(dry.out), dry.out);
+}
+
+// ── 16. try --agent codex prints the same verdict table, through the adapter ─────────────────────
+{
+  const dir = scratchDir("agr-codex-try");
+  const claude = cli(["try", "git push origin main 2>&1 | tail -2"], dir);
+  const codex = cli(["try", "--agent", "codex", "git push origin main 2>&1 | tail -2"], dir);
+  check("codex-try: exits 1 when a guard denies", codex.code === 1, codex.out);
+  const rows = (o) => o.split("\n").filter((l) => /^(DENY|warn|allow|error) /.test(l)).map((l) => l.replace(/\s+/g, " "));
+  check("codex-try: the verdict rows are IDENTICAL to the Claude table", JSON.stringify(rows(codex.out)) === JSON.stringify(rows(claude.out)), `claude:\n${rows(claude.out).join("\n")}\ncodex:\n${rows(codex.out).join("\n")}`);
+  check("codex-try: names the adapter as the path the verdicts took", /via hooks\/adapters\/codex\.mjs/.test(codex.out), codex.out);
+  const ok = cli(["try", "--agent", "codex", "npm test"], dir);
+  check("codex-try: a benign command exits 0 with every guard allow", ok.code === 0 && !/^(DENY|error)/m.test(ok.out), ok.out);
+  const warn = cli(["try", "--agent", "codex", 'git commit -m "fix: TypeError: x is not a function"'], dir);
+  check("codex-try: the prompt-only guard still warns, exit 0", warn.code === 0 && /^warn  root-cause-guard\.mjs: /m.test(warn.out), warn.out);
+  check("codex-try: an unknown --agent exits 1 and names the choices", (() => { const u = cli(["try", "--agent", "gemini", "npm test"], dir); return u.code === 1 && /expected one of claude, codex/.test(u.out); })());
+  check("codex: doctor --agent codex is refused with a pointer, exit 1", cli(["doctor", "--agent", "codex"], dir).code === 1);
+}
+
 // ── 8. usage ─────────────────────────────────────────────────────────────────────────────────────
 {
   const dir = scratchDir("agr-usage");
@@ -420,6 +510,7 @@ const backups = (dir) =>
   check("--help → exit 0", cli(["--help"], dir).code === 0);
   const h = cli(["--help"], dir).out;
   check("--help lists every command", ["init", "uninstall", "doctor", "try", "new", "report", "demo"].every((c) => new RegExp(`^  ${c} `, "m").test(h)), h);
+  check("--help mentions --agent codex", /--agent codex/.test(h), h);
 }
 
 // ── the tarball carries every file init copies ───────────────────────────────────────────────────

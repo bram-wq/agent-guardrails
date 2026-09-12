@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Test runner: every hooks/*.test.mjs and bin/*.test.mjs, sequentially, in plain Node. Output streams
+// Test runner: every hooks/*.test.mjs, hooks/adapters/*.test.mjs and bin/*.test.mjs, sequentially, in plain Node. Output streams
 // through; the first red suite stops the run with a non-zero exit. No framework — a hook must be
 // verifiable by `node <file>` alone, and so must its runner.
 import { readdirSync } from "node:fs";
@@ -9,7 +9,7 @@ import { spawnSync } from "node:child_process";
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const suites = [];
-for (const dir of ["hooks", "bin"]) {
+for (const dir of ["hooks", "hooks/adapters", "bin"]) {
   for (const f of readdirSync(join(ROOT, dir)).sort())
     if (f.endsWith(".test.mjs")) suites.push(join(dir, f));
 }
