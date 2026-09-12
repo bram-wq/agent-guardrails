@@ -70,5 +70,6 @@ environment with required approval and `HOST_PROOF_PROJECT`, pointing to a fresh
 already reviewed fixture prepared from the exact checked-out source. It is not a
 pull-request workflow. Do not run untrusted PR jobs on that authenticated runner.
 Also set the environment's `HOST_PROOF_EXPECT_VERSION` to the reviewed CLI version.
-No runner is provisioned by this repository; until configured, host automation
-is available but has no execution evidence.
+The trusted-host workflow is **available but not provisioned**. This repository
+does not provision a runner, credentials or hook trust. Those are owner-managed
+prerequisites; the workflow file alone is not evidence of a working runner.
