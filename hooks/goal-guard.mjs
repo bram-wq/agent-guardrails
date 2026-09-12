@@ -73,6 +73,7 @@ import {
   existsSync,
   rmSync,
   statSync,
+  realpathSync,
 } from "node:fs";
 import { spawnSync, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -111,7 +112,11 @@ const keyCache = new Map();
  * @returns {{toplevel:string, slug:string, isGit:boolean}}
  */
 export function worktreeKey(cwd = process.cwd(), warn = defaultWarn) {
-  const from = resolve(cwd);
+  // realpath, not resolve: on macOS the temp dir is a symlink (/var -> /private/var) and a hook's
+  // process.cwd() is already real, so a caller passing the unresolved path would key a DIFFERENT
+  // slug for the same directory. Two spellings of one directory must be one goal.
+  let from = resolve(cwd);
+  try { from = realpathSync(from); } catch { /* keep the resolved path */ }
   if (keyCache.has(from)) return keyCache.get(from);
   let top = null;
   try {
@@ -230,7 +235,7 @@ export function allowedNpmScriptRe(env = process.env) {
 // disk, in the diff, and passed through the Write hooks. It is WEAKER STILL out of repo: an absolute
 // path to /tmp gets none of that visibility. Not zero, and no comment should imply it is.
 export const ALLOWED_DONE_SEGMENT_RE =
-  /^(?:npm\s+(?:run\s+[\w:.-]+|test)(?:\s+--)?|node\s+[\w@./-]+\.(?:mjs|js|cjs)|npx\s+vitest|npm\s+exec\s+vitest)(?:\s+[\w@:./=,-]+)*$/;
+  /^(?:npm\s+(?:run\s+[\w:.-]+|test)(?:\s+--)?|node\s+(?:[A-Za-z]:)?[\w@./\\-]+\.(?:mjs|js|cjs)|npx\s+vitest|npm\s+exec\s+vitest)(?:\s+(?:[A-Za-z]:)?[\w@:./=,\\-]+)*$/;
 
 // Shell metacharacters are refused outright: `&&` is the ONLY composition allowed, because it is the
 // one this code implements itself (segments run sequentially, stopping at the first non-zero). A `;`,
@@ -239,7 +244,10 @@ export const ALLOWED_DONE_SEGMENT_RE =
 // ⚠ THE `&` CASE NEEDS BOTH LOOKAROUNDS. `&(?!&)` alone matches the SECOND `&` of a legitimate `&&`
 // (it is followed by a space), which refused every composed command — caught by the accept-side
 // test, which is exactly why the allowlist is asserted in both directions and not just on bypasses.
-export const SHELL_METACHAR_RE = /[;|`\n\r<>(){}$]|(?<!&)&(?!&)|\\/;
+// On Windows a backslash is the path separator (`node scripts\\check.mjs`), so it is not a
+// metacharacter there; every segment is still spawned with shell:false, so no shell ever parses it.
+export const SHELL_METACHAR_RE =
+  process.platform === "win32" ? /[;|`\n\r<>(){}$]|(?<!&)&(?!&)/ : /[;|`\n\r<>(){}$]|(?<!&)&(?!&)|\\/;
 
 /**
  * Words that describe ACTIVITY or SENTIMENT rather than a state. Nothing can fail them, so an
@@ -580,7 +588,8 @@ export function cli(argv, env = process.env, out = process.stdout, cwd = process
     let code = 0;
     for (const seg of goal.doneCommand.split("&&").map((s) => s.trim())) {
       const [bin, ...args] = seg.split(/\s+/);
-      const r = spawnSync(bin, args, {
+      const launch = resolveLauncher(bin);
+      const r = spawnSync(launch.cmd, [...launch.pre, ...args], {
         shell: false,
         stdio: "inherit",
         env,
@@ -609,6 +618,22 @@ export function cli(argv, env = process.env, out = process.stdout, cwd = process
 
   say("goal-guard: usage --set '<objective>' --done '<command>' [--baseline …] [--invariant …] | --prove | --status | --clear");
   return 1;
+}
+
+/**
+ * How to start a verification head WITHOUT a shell, on every platform.
+ * `node` is this very runtime (process.execPath), so a PATH with a different node cannot substitute.
+ * On Windows `npm`/`npx` are .cmd shims that Node refuses to spawn with shell:false (CVE-2024-27980),
+ * so they are started as `node npm-cli.js` / `node npx-cli.js` from the runtime's own npm install.
+ * Anything unresolved falls through to the bare name and, if unspawnable, is stamped as a failure.
+ */
+export function resolveLauncher(bin) {
+  if (bin === "node") return { cmd: process.execPath, pre: [] };
+  if (process.platform === "win32" && (bin === "npm" || bin === "npx")) {
+    const cli = join(dirname(process.execPath), "node_modules", "npm", "bin", `${bin}-cli.js`);
+    if (existsSync(cli)) return { cmd: process.execPath, pre: [cli] };
+  }
+  return { cmd: bin, pre: [] };
 }
 
 // ── HOOK EVENTS ──────────────────────────────────────────────────────────────────────────────────
