@@ -102,6 +102,9 @@ flowchart LR
 
 The doctrine behind all of it is in [`docs/DOCTRINE.md`](docs/DOCTRINE.md). The seven rules fit on one page.
 
+The story of how the stack was built, with the three incidents that shaped it, is in
+[`docs/running-agents-unattended.md`](docs/running-agents-unattended.md).
+
 ---
 
 ## Details
