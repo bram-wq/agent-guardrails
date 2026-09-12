@@ -235,7 +235,7 @@ export function allowedNpmScriptRe(env = process.env) {
 // disk, in the diff, and passed through the Write hooks. It is WEAKER STILL out of repo: an absolute
 // path to /tmp gets none of that visibility. Not zero, and no comment should imply it is.
 export const ALLOWED_DONE_SEGMENT_RE =
-  /^(?:npm\s+(?:run\s+[\w:.-]+|test)(?:\s+--)?|node\s+(?:[A-Za-z]:)?[\w@./\\-]+\.(?:mjs|js|cjs)|npx\s+vitest|npm\s+exec\s+vitest)(?:\s+(?:[A-Za-z]:)?[\w@:./=,\\-]+)*$/;
+  /^(?:npm\s+(?:run\s+[\w:.-]+|test)(?:\s+--)?|node\s+(?:[A-Za-z]:)?[\w@~./\\-]+\.(?:mjs|js|cjs)|npx\s+vitest|npm\s+exec\s+vitest)(?:\s+(?:[A-Za-z]:)?[\w@~:./=,\\-]+)*$/;
 
 // Shell metacharacters are refused outright: `&&` is the ONLY composition allowed, because it is the
 // one this code implements itself (segments run sequentially, stopping at the first non-zero). A `;`,
