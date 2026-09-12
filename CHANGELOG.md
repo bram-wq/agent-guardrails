@@ -11,7 +11,8 @@ First public release.
 
 - Seven deterministic Claude Code guard hooks, each with a must-fire and a must-not-fire test:
   `prose-guard`, `runaway-guard`, `piped-verdict-guard`, `root-cause-guard`, `scope-guard`,
-  `ui-evidence-guard`.
+  `ui-evidence-guard`, `goal-guard` (SessionStart re-injects the armed goal; Stop refuses a
+  completion claim until the DONE command has been proven with exit 0).
 - `_fire-log.mjs`: per-hook run/fire telemetry with a byte-bounded log and a never-trimmed
   last-seen ledger; records a source-authored `kind`, never the reason text.
 - `_scratch-dir.mjs`: self-reaping temp directories for the tests.
