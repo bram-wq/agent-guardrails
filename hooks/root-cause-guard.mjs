@@ -42,6 +42,7 @@
  * fixes). What it refuses to allow is the silent version.
  */
 import { readFileSync } from "node:fs";
+import { basename } from "node:path";
 import { recordFire, recordInvocation } from "./_fire-log.mjs";
 
 // Instrumented so the fire log can SEE this guard: a guard whose zero is unreadable can never be
@@ -114,8 +115,5 @@ function main() {
   process.exit(0); // prompt, never a block — see the header
 }
 
-if (
-  process.argv[1] &&
-  import.meta.url.endsWith(process.argv[1].split("/").pop())
-)
-  main();
+// basename, not split("/"): Windows argv[1] is a backslash path (see ui-evidence-guard).
+if (process.argv[1] && import.meta.url.endsWith(basename(process.argv[1]))) main();

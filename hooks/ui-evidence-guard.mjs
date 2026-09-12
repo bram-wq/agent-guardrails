@@ -15,7 +15,7 @@
 // artefact.
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { join, relative } from "node:path";
+import { basename, join, relative } from "node:path";
 import { recordFire, recordInvocation } from "./_fire-log.mjs";
 
 // Instrumented so the fire log can SEE this guard: a guard whose zero is unreadable can never be
@@ -176,8 +176,10 @@ export function newestUiChangeMs(git, base, files) {
   return times.length ? Math.max(...times) * 1000 : null;
 }
 
+// basename, not split("/"): on Windows argv[1] is a backslash path, and split("/").pop() returned
+// the whole path, so the hook never ran when spawned and exited silently with no verdict.
 const invokedDirectly =
-  process.argv[1] && import.meta.url.endsWith(process.argv[1].split("/").pop());
+  process.argv[1] && import.meta.url.endsWith(basename(process.argv[1]));
 if (invokedDirectly) {
   let ev;
   try {
