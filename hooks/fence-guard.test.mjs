@@ -485,7 +485,10 @@ try {
     const ratio = adv.ms / benign.ms;
     check(
       `LATENCY ${label} decides within budget (${ratio.toFixed(1)}x a same-size benign command, best of ${SAMPLES})`,
-      ratio < 2.0 ? "linear" : `SUPERLINEAR (${ratio.toFixed(1)}x)`,
+      // The bound is 4x, not 2x: a quadratic scan of 60 KiB is hundreds of times slower, so 4x still
+      // fails it, while a shared CI runner measured a linear scan at exactly 2.0x (best of 5) and
+      // flaked a green branch red. A budget that trips on scheduler noise is not a budget.
+      ratio < 4.0 ? "linear" : `SUPERLINEAR (${ratio.toFixed(1)}x)`,
       "linear",
     );
   }

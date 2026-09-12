@@ -6,7 +6,7 @@ looping, filling a disk, or pressing the one button that cannot be un-pressed.**
 [![guard tests](https://github.com/bram-wq/agent-guardrails/actions/workflows/test.yml/badge.svg)](https://github.com/bram-wq/agent-guardrails/actions/workflows/test.yml)
 ![node](https://img.shields.io/badge/node-%E2%89%A520-brightgreen) ![deps](https://img.shields.io/badge/dependencies-0-blue) ![license](https://img.shields.io/badge/license-MIT-lightgrey)
 
-Eight production hooks, 1,152 test cases, zero dependencies, one-command install and uninstall.
+Eight production hooks, 1,154 test cases, zero dependencies, one-command install and uninstall.
 Every guard has a must-fire test (the incident, verbatim) and a must-not-fire test (its legitimate
 twin), because a guard that blocks real work gets switched off within a week. The test total on this
 page is printed by the runner, not typed.

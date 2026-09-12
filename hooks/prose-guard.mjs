@@ -143,7 +143,12 @@ function resolves(tok, cwd) {
   if (tok.includes("/") || tok.startsWith("~")) {
     const p = expandPath(tok);
     // `$OTHER/x` or `~user/x` — an expansion only the shell can do. Cannot tell -> allow.
-    if (/[$~]/.test(p)) return true;
+    // ⚠ TILDE ONLY AT THE START. Bash expands `~` at the beginning of a word (and after `=`/`:` in
+    // assignments, which never reach here as a verb); a `~` anywhere else is a literal character.
+    // The first version tested `/[$~]/` and waved through EVERY path containing a tilde — on a
+    // Windows runner the home directory spells as `RUNNER~1`, so a non-existent file under it was
+    // judged "cannot tell" and allowed, which is the guard's whole failure mode wearing a short name.
+    if (/\$/.test(p) || p.startsWith("~")) return true;
     // On Windows the Bash tool runs Git Bash, whose MSYS root maps /bin, /usr/bin and /dev onto
     // places Node's fs cannot see — `existsSync("/bin/echo")` is false while `/bin/echo hello` runs
     // fine. Node cannot tell here, and the header's own rule for that case is ALLOW.

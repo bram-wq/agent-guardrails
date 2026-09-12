@@ -209,6 +209,10 @@ try {
     "allow",
   );
   check("FIRE  path with a space that does not exist", decide(`${TMP}/my\\ dir/nope.sh`), "deny");
+  // A tilde that is not at the start of the word is a literal character to bash, so it cannot be
+  // an expansion the guard "cannot tell" about: judge the path.
+  check("FIRE  path with a MID-WORD tilde that does not exist (Windows 8.3 names spell home as RUNNER~1)", decide(`${TMP}/RUNNER~1/nope.sh`), "deny");
+  check("ALLOW `~user/…` is a real expansion the guard cannot perform", decide("~someone/bin/run.sh"), "allow");
 } finally {
   rmSync(TMP, { recursive: true, force: true });
 }
