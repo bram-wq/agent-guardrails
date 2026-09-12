@@ -3,7 +3,7 @@
 All notable changes to this project are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org).
 
-## [Unreleased] — 0.3.0
+## [0.3.0] — 2026-09-12
 
 Driven by a survey of the guardrail landscape (deterministic hook sets, sandboxes, policy files,
 model-based validators) against this repo's threat model. Everything adopted is deterministic and
