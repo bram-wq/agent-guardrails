@@ -1,0 +1,39 @@
+name: Independent adoption report
+description: Report a real installation, including unsuccessful attempts.
+title: '[Adoption] '
+body:
+  - type: markdown
+    attributes:
+      value: 'Read docs/ADOPTION-TRIAL.md first. Do not paste secrets or raw authenticated transcripts.'
+  - type: checkboxes
+    attributes:
+      label: Independence and consent
+      options:
+        - label: I am outside the maintainer organization and performed this trial myself.
+          required: true
+        - label: I consent to publication of the redacted information I submit here.
+          required: true
+  - type: textarea
+    attributes:
+      label: Versions and environment
+      description: Repository SHA/package version, OS, Node and host CLI versions.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Reproduction and observed results
+      description: Exact commands, exit codes, benign control, protected-file refusal; failures count too.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Friction and assistance
+      description: Time spent, what broke, what improved, and any maintainer help.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Redaction and attribution
+      description: What was redacted, receipt hash if attached, and preferred attribution.
+    validations:
+      required: true

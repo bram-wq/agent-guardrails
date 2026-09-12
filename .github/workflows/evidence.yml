@@ -1,0 +1,40 @@
+name: Adversarial evidence
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '23 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: evidence-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  corpus:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Evaluate the versioned corpus and source mutations
+        run: node scripts/evaluate.mjs --out artifacts/evaluation
+      - name: Exercise the packed package offline
+        working-directory: artifacts/evaluation
+        run: |
+          node ../../scripts/package-smoke.mjs > package-smoke.json
+          sha256sum package-smoke.json > package-smoke.sha256
+      - name: Preserve the measured receipt, including failed evaluations
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: adversarial-evidence-${{ github.sha }}
+          path: artifacts/evaluation/
+          if-no-files-found: error
+          retention-days: 30

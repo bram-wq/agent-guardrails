@@ -1,0 +1,30 @@
+{
+  "version": "bash-blocking-v1",
+  "scope": "Six blocking Bash guards only. Curated regression corpus, not a random sample of developer traffic. Commands are never executed.",
+  "cases": [
+    {"id":"fence-direct","guard":"fence-guard.mjs","expected":"deny","command":"git push origin main"},
+    {"id":"fence-wrapped","guard":"fence-guard.mjs","expected":"deny","command":"git -C /repo push origin main"},
+    {"id":"fence-feature","guard":"fence-guard.mjs","expected":"allow","command":"git push origin feature/example"},
+    {"id":"fence-read","guard":"fence-guard.mjs","expected":"allow","command":"git status --short"},
+    {"id":"prose-request","guard":"prose-guard.mjs","expected":"deny","command":"please run the tests"},
+    {"id":"prose-question","guard":"prose-guard.mjs","expected":"deny","command":"why is this broken"},
+    {"id":"prose-quoted","guard":"prose-guard.mjs","expected":"allow","command":"echo 'please run the tests'"},
+    {"id":"prose-command","guard":"prose-guard.mjs","expected":"allow","command":"npm test"},
+    {"id":"runaway-yes","guard":"runaway-guard.mjs","expected":"deny","command":"yes"},
+    {"id":"runaway-prose","guard":"runaway-guard.mjs","expected":"deny","command":"yes for sure"},
+    {"id":"runaway-version","guard":"runaway-guard.mjs","expected":"allow","command":"node --version"},
+    {"id":"runaway-bounded","guard":"runaway-guard.mjs","expected":"allow","command":"timeout 1 yes"},
+    {"id":"pipe-push","guard":"piped-verdict-guard.mjs","expected":"deny","command":"git push origin feature/example | tail -2"},
+    {"id":"pipe-merge","guard":"piped-verdict-guard.mjs","expected":"deny","command":"git merge feature/example | tail -2"},
+    {"id":"pipe-recovered","guard":"piped-verdict-guard.mjs","expected":"allow","command":"set -o pipefail; git push origin feature/example | tail -2"},
+    {"id":"pipe-read","guard":"piped-verdict-guard.mjs","expected":"allow","command":"git log | head -5"},
+    {"id":"secret-file","guard":"secret-write-guard.mjs","expected":"deny","command":"printf 'AWS_ACCESS_KEY_ID=AKIAJ7Q2M4X9K1LP3ZRW\\n' > .env"},
+    {"id":"secret-tee","guard":"secret-write-guard.mjs","expected":"deny","command":"echo 'AWS_ACCESS_KEY_ID=AKIAJ7Q2M4X9K1LP3ZRW' | tee .env"},
+    {"id":"secret-placeholder","guard":"secret-write-guard.mjs","expected":"allow","command":"printf 'APP_MODE=test\\n' > .env.example"},
+    {"id":"secret-read","guard":"secret-write-guard.mjs","expected":"allow","command":"cat .env.example"},
+    {"id":"config-sed","guard":"config-tamper-guard.mjs","expected":"deny","command":"sed -i 's/goal-guard/goal-guard.off/' .claude/settings.json"},
+    {"id":"config-redirect","guard":"config-tamper-guard.mjs","expected":"deny","command":"printf '{}' > .claude/settings.json"},
+    {"id":"config-read","guard":"config-tamper-guard.mjs","expected":"allow","command":"cat .claude/settings.json"},
+    {"id":"config-ordinary","guard":"config-tamper-guard.mjs","expected":"allow","command":"printf 'hello' > notes.txt"}
+  ]
+}
