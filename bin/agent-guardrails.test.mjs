@@ -20,7 +20,7 @@ const SHIPPED = listFiles(join(ROOT, "hooks")).filter(
   (f) => (f.endsWith(".mjs") && !f.endsWith(".test.mjs") && !f.includes("/")) || /^rules\/[^/]+\.json$/.test(f),
 );
 const EXAMPLE = JSON.parse(readFileSync(join(ROOT, "settings.example.json"), "utf8")).hooks;
-const entryFile = (h) => [h.command, ...(h.args ?? [])].find((a) => typeof a === "string" && a.endsWith(".mjs"))?.split("/").pop();
+const entryFile = (h) => [h.command, ...(h.args ?? [])].find((a) => typeof a === "string" && a.endsWith(".mjs"))?.split(/[\\/]/).pop(); // --user writes an absolute path, which is backslashed on Windows
 /** settings.example.json may wire a hook ahead of its file landing; init merges only what ships. */
 const exampleEntries = (pred = () => true) =>
   Object.entries(EXAMPLE).flatMap(([ev, groups]) => groups.flatMap((g) => g.hooks.filter((h) => pred(ev, g, h))));
