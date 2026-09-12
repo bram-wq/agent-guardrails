@@ -9,9 +9,20 @@ and pointed at a throwaway fire log and state dir, so a bench never inflates the
 ```sh
 node scripts/bench.mjs           # N=30
 node scripts/bench.mjs --n 100
+node scripts/bench.mjs --n 30 --json > benchmark.json
 ```
 
-## Measured 2026-09-12
+The current runner enumerates registrations from `settings.example.json`, including lifecycle
+events and repeated registrations of a guard. It samples Edit for the write-tool matcher; it does
+not claim coverage of every tool alternative. JSON receipts include raw samples, Node/OS versions,
+sample count, timestamp, and the configuration SHA256. Each subprocess has a 15-second timeout.
+Malformed output, denied benign events, crashes and unknown CLI options refuse a result.
+The working directory and state are temporary: the benchmark does not inspect your project state.
+
+## Historical measurements — 2026-09-12, seven-hook configuration
+
+These retained results predate the current configuration. They are not a performance receipt for
+today's installation. In particular, their four-process Bash total excludes three guards now shipped.
 
 Both runs on the same machine (WSL2, Linux 6.6.87, x64), same commit, minutes apart. Everything
 below is pasted from the script's stdout unedited.
@@ -71,11 +82,10 @@ Bash tool call, sum of the 4 Bash-matched guards' p50 if run serially: 374.3 ms;
 
 ## The per-Bash-call cost
 
-With the shipped `settings.example.json`, one Bash tool call spawns **four** Node processes
-(prose, runaway, piped-verdict, root-cause) — five once a fence guard is added, as in production.
-Claude Code runs the matching hooks in parallel, so wall time is roughly the slowest one
-(~40 ms on Node 24, ~100 ms on Node 20 here), but CPU is four starts, and on a loaded machine the
-parallel starts serialise.
+The current configuration registers **seven** Bash guards: fence, prose, runaway, piped-verdict,
+root-cause, secret-write and config-tamper. The runner derives this population from the configuration.
+The sum of isolated p50 measurements is a serial estimate, not observed host latency; parallel
+scheduling, CPU consumption and contention require measurement inside the actual agent host.
 
 Mitigations, cheapest first:
 
@@ -88,8 +98,9 @@ Mitigations, cheapest first:
    from any one of them is the runner's stdout. The direct wiring shipped here is simpler and has
    no shared failure mode; it pays one start per guard for that.
 3. **Drop a guard on counts.** `agent-guardrails report` shows runs and fires per hook. A guard
-   that ran 4,000 times and never fired costs 4,000 starts for nothing measurable — but read
-   `never ran` and `ran, never fired` as different sentences before deleting anything.
+   that ran 4,000 times and never fired has measurable invocation cost, but that does not establish
+   that its protection is unnecessary. Review the threat and legitimate twins before removing it;
+   `never ran` and `ran, never fired` are different observations.
 
 ## What this bench does not measure
 

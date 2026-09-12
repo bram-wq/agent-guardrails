@@ -8,23 +8,25 @@ Assumes Node ≥ 20, git, and a project that already runs Claude Code.
 Pin the tag. `npx github:…` without a ref tracks the default branch, which is a moving target.
 
 ```sh
-npx github:bram-wq/agent-guardrails#v0.1.0 init --dry-run   # the plan: which files, which settings keys, the backup path
-npx github:bram-wq/agent-guardrails#v0.1.0 init             # copies hooks/ → .claude/hooks/, merges settings.json after a timestamped backup
-npx github:bram-wq/agent-guardrails#v0.1.0 doctor           # each hook parses, exits 0 on a benign event, every settings path exists
+npx github:bram-wq/agent-guardrails#v0.4.0 init --dry-run   # the plan: files, settings keys, backup path
+npx github:bram-wq/agent-guardrails#v0.4.0 init             # copies hooks and merges settings after a backup
+npx github:bram-wq/agent-guardrails#v0.4.0 doctor           # standalone hook checks and settings paths
 ```
 
 `init` never overwrites a hook you already have and never removes a settings key; add `--user`
-to target `~/.claude` instead. Then, in a Claude Code session, run `/hooks` and confirm the seven
-entries appear under PreToolUse, Stop and SessionStart. `doctor` proves the files answer; `/hooks`
-proves Claude Code loaded them. Both, or it is not installed.
+to target `~/.claude` instead. In a Claude Code session, run `/hooks` and compare the loaded entries
+against `settings.example.json` for the installed tag, including PreCompact. Doctor checks standalone
+behavior; the host's loaded list and an actual benign/incident pair check runtime integration.
+The source revision after v0.4.0 adds `doctor --strict` for exact shipped registration checks;
+that option is not available in the pinned v0.4.0 commands above.
 
 Two guards are inert until you opt in: scope-guard (needs a `.agent-scope` file) and goal-guard
-(needs `--set`). The other five are live from the first tool call.
+(needs `--set`). Other hooks depend on their registered lifecycle event, not necessarily the first tool call.
 
 ## Day 1 — read the first report
 
 ```sh
-npx github:bram-wq/agent-guardrails#v0.1.0 report
+npx github:bram-wq/agent-guardrails#v0.4.0 report
 ```
 
 The status column has two zero-states and they mean opposite things:
@@ -76,7 +78,7 @@ zero runs is a wiring bug.
 ## Rollback
 
 ```sh
-npx github:bram-wq/agent-guardrails#v0.1.0 uninstall            # removes the entries init added and the hook files it copied
+npx github:bram-wq/agent-guardrails#v0.4.0 uninstall            # removes owned entries and unmodified copied hooks
 ```
 
 `init` wrote a backup next to your settings before its first merge:

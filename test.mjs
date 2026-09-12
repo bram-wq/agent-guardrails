@@ -9,7 +9,7 @@ import { spawnSync } from "node:child_process";
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const suites = [];
-for (const dir of ["hooks", "hooks/adapters", "bin"]) {
+for (const dir of ["hooks", "hooks/adapters", "bin", "scripts"]) {
   for (const f of readdirSync(join(ROOT, dir)).sort())
     if (f.endsWith(".test.mjs")) suites.push(join(dir, f));
 }

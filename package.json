@@ -47,6 +47,7 @@
     "test": "node test.mjs",
     "demo": "node demo.mjs",
     "render:svg": "node scripts/render-demo-svg.mjs",
-    "bench": "node scripts/bench.mjs"
+    "bench": "node scripts/bench.mjs",
+    "test:package": "node scripts/package-smoke.mjs"
   }
 }

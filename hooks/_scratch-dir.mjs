@@ -8,11 +8,9 @@
  * So: creating the directory IS registering it. The reaper is armed lazily on first use and runs on
  * `process.exit`, which is synchronous — `rmSync` is the only shape that can complete inside it.
  *
- * A process killed by SIGKILL never reaches an exit handler, so the second half is a bounded SWEEP
- * at startup: before the first directory of a given prefix is created, this run removes stale
- * corpses of that same prefix left by earlier runs. It is bounded by PREFIX (only names this process
- * has asked for), by SHAPE (only `<prefix><6 alphanumerics>`, which is what mkdtemp produces) and by
- * AGE (older than STALE_AFTER_MS), so it can never reap a concurrent sibling's live fixtures.
+ * A process killed by SIGKILL never reaches an exit handler. Its leftovers require explicit
+ * operator cleanup: age and prefix do not prove the owning process is dead. Allocation must
+ * never delete another process's directory, however old that directory happens to be.
  */
 import { lstatSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -23,8 +21,9 @@ let armed = false;
 
 export const STALE_AFTER_MS = 6 * 60 * 60 * 1000;
 const MKDTEMP_SUFFIX = /^[A-Za-z0-9]{6}$/;
-const sweptPrefixes = new Set();
 
+// Explicit maintenance only. The caller must establish that no live owner uses these paths;
+// this age-based helper cannot establish ownership and is never called during allocation.
 export function sweepStaleScratchDirs(prefix, opts = {}) {
   const base = opts.base ?? tmpdir();
   const ageMs = opts.ageMs ?? STALE_AFTER_MS;
@@ -67,10 +66,6 @@ export function scratchDir(prefix) {
   if (typeof prefix !== "string" || prefix.trim() === "")
     throw new TypeError("scratchDir(prefix): prefix must be a non-empty string");
   const normalised = prefix.endsWith("-") ? prefix : `${prefix}-`;
-  if (!sweptPrefixes.has(normalised)) {
-    sweptPrefixes.add(normalised);
-    sweepStaleScratchDirs(normalised);
-  }
   const d = mkdtempSync(join(tmpdir(), normalised));
   live.add(d);
   if (!armed) {
