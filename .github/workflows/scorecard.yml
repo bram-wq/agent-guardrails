@@ -1,0 +1,42 @@
+name: OpenSSF Scorecard
+on:
+  # Scorecard publishes results for the default branch only, so it does not run on pull requests.
+  branch_protection_rule:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 6 * * 3'
+  workflow_dispatch:
+
+# Read-only by default; the job below adds only what publishing requires.
+permissions: read-all
+
+jobs:
+  analysis:
+    name: Scorecard analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      # Upload the SARIF to code scanning.
+      security-events: write
+      # Sign the published result with the workflow's OIDC identity.
+      id-token: write
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: ossf/scorecard-action@2d1146689b8cda280b9bc96326124645441f03bc # v2.4.4
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: true
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: scorecard-sarif
+          path: results.sarif
+          retention-days: 5
+      - uses: github/codeql-action/upload-sarif@faaca9a8f6edddba5725ffe5adefdab6669a2eca # v3.38.0
+        with:
+          sarif_file: results.sarif
