@@ -1,0 +1,7 @@
+# Every report goes through one of the templates in this folder, so it arrives with the fields a
+# maintainer needs. A security problem does not belong in a public issue at all.
+blank_issues_enabled: false
+contact_links:
+  - name: Report a vulnerability privately
+    url: https://github.com/bram-wq/agent-guardrails/security/advisories/new
+    about: A way to make a guard log a secret, bypass its fail-open path, or write outside its state directory. See SECURITY.md.
