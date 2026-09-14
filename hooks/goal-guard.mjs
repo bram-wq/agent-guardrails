@@ -70,17 +70,16 @@
 import {
   readFileSync,
   writeFileSync,
-  appendFileSync,
   mkdirSync,
   existsSync,
   rmSync,
-  statSync,
   realpathSync,
 } from "node:fs";
 import { spawnSync, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { join, dirname, basename, resolve, sep } from "node:path";
 import { recordFire, recordInvocation } from "./_fire-log.mjs";
+import { appendLine, readLines } from "./_rotating-log.mjs";
 
 recordInvocation("goal-guard.mjs");
 
@@ -272,8 +271,14 @@ export function npmScriptAllowed(name, env = process.env) {
 // ESCAPE_FLAG_RE refuses the flags that relocate what a verification runs (a prefix, a root, a config
 // file, a preload), and every argument that is an absolute path OUTSIDE the worktree or carries a
 // `..` segment is refused too. What remains is code that sits inside the tree the goal is keyed by.
+//
+// ⚠ NO DRIVE-LETTER GROUP IN THE ARGUMENT TAIL. `(?:[A-Za-z]:)?` in front of a class that already holds
+// letters and `:` gave every argument shaped like `A:,` two parses, so a REFUSED command of n such
+// arguments backtracked through 2^n of them: `npx vitest` plus 24 took 0.6 s, and every 2 more
+// quadrupled it (CodeQL js/redos). The class alone accepts exactly the same arguments, drive paths
+// included. The `node` head keeps its drive group: that class has no `:`, so there is one parse.
 export const ALLOWED_DONE_SEGMENT_RE =
-  /^(?:npm\s+(?:run\s+[\w:.-]+|test)(?:\s+--)?|node\s+(?:[A-Za-z]:)?[\w@~./\\-]+\.(?:mjs|js|cjs)|npx\s+vitest|npm\s+exec\s+vitest)(?:\s+(?:[A-Za-z]:)?[\w@~:./=,\\-]+)*$/;
+  /^(?:npm\s+(?:run\s+[\w:.-]+|test)(?:\s+--)?|node\s+(?:[A-Za-z]:)?[\w@~./\\-]+\.(?:mjs|js|cjs)|npx\s+vitest|npm\s+exec\s+vitest)(?:\s+[\w@~:./=,\\-]+)*$/;
 /** Flags that point an allowlisted head at code outside the worktree, or preload code into it. */
 export const ESCAPE_FLAG_RE =
   /^(?:--prefix|--root|--config|-C|-c|--dir|-r|--require|--import|--loader|--experimental-loader)(?:=|$)/;
@@ -562,6 +567,15 @@ export function clearGoal(env = process.env, cwd = process.cwd()) {
 
 // ── LEDGER ───────────────────────────────────────────────────────────────────────────────────────
 // One line per proof attempt: ISO ts, exit code, and the exact command. Append-only.
+//
+// ⚠ THE BOUND ROTATES; IT NEVER REWRITES. The ledger used to be bounded by read-trim-rewrite, and
+// sessions in one worktree share it, so a stamp another process appended between that read and that
+// write was ERASED. A size re-check narrowed the window without closing it, and once the ledger sat at
+// its ceiling every stamp re-opened it. Losing a RED stamp leaves an older green as the newest entry,
+// which lets an unproven completion through. The bound now lives in _rotating-log.mjs: a full ledger
+// is MOVED aside into a segment, and nothing is ever overwritten.
+const LEDGER_BOUND = { maxLines: MAX_LEDGER_LINES, keep: MAX_LEDGER_LINES, weight: () => 1 };
+
 /** @returns {boolean} whether the stamp actually reached disk — callers must not claim it did otherwise. */
 export function stamp(exitCode, command, env = process.env, cwd = process.cwd()) {
   const f = ledgerFile(env, cwd);
@@ -569,32 +583,33 @@ export function stamp(exitCode, command, env = process.env, cwd = process.cwd())
   // "recorded exit=0" over a write that never happened — could-not-do printed as done, inside the
   // very guard built to stop it.
   if (!f) return false;
-  mkdirSync(dirname(f), { recursive: true });
-  appendFileSync(
+  appendLine(
     f,
     `${new Date().toISOString()}\texit=${exitCode}\t${String(command).replace(/\s+/g, " ")}\n`,
+    LEDGER_BOUND,
   );
-  // Enforce the bound HERE, where the file grows. Trimming keeps the NEWEST lines because
-  // ledgerVerdict answers "what happened most recently", so the tail is the load-bearing end.
-  try {
-    const before = statSync(f).size;
-    const lines = readFileSync(f, "utf8").split("\n").filter(Boolean);
-    if (lines.length > MAX_LEDGER_LINES) {
-      // OPTIMISTIC CONCURRENCY. read-then-write is not atomic, and sessions in one worktree share
-      // this file: a stamp appended by another process between our read and our write would be
-      // erased by the rewrite. Losing a RED stamp is the direction that matters — it would leave the
-      // newest surviving entry green and let an unproven completion through. So the size is
-      // re-checked immediately before writing, and if the file moved at all the trim is ABANDONED.
-      // Skipping costs a file that stays oversized until the next stamp; guessing costs a verdict.
-      if (statSync(f).size === before) {
-        writeFileSync(f, lines.slice(-MAX_LEDGER_LINES).join("\n") + "\n");
-      }
-    }
-  } catch {
-    // A trim failure must never lose the stamp that was just recorded, and must never be reported as
-    // a proof failure: the claim is already durable on the line above.
-  }
   return true;
+}
+
+/**
+ * The newest MAX_LEDGER_LINES stamps across the live ledger and its rotated segments, oldest first.
+ * Ordered by each stamp's OWN timestamp: after a rotation the lines span several files, so file order
+ * no longer means time order. On an equal timestamp a non-zero exit sorts AFTER exit=0, so a tie reads
+ * red — the direction that cannot let an unproven completion through.
+ * @returns {string[] | null} null when no ledger exists at all; an unreadable ledger THROWS.
+ */
+export function readLedgerLines(env = process.env, cwd = process.cwd()) {
+  const f = ledgerFile(env, cwd);
+  const lines = f ? readLines(f) : null;
+  if (lines === null) return null;
+  return lines
+    .map((line, i) => {
+      const [ts, code] = line.split("\t");
+      return { line, i, ts, red: code !== "exit=0" };
+    })
+    .sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : a.red !== b.red ? (a.red ? 1 : -1) : a.i - b.i))
+    .map((e) => e.line)
+    .slice(-MAX_LEDGER_LINES);
 }
 
 /**
@@ -604,15 +619,14 @@ export function stamp(exitCode, command, env = process.env, cwd = process.cwd())
  * @returns {{proven:boolean, why:string}}
  */
 export function ledgerVerdict(goal, env = process.env, cwd = process.cwd()) {
-  const f = ledgerFile(env, cwd);
-  if (!f || !existsSync(f))
-    return { proven: false, why: "no proof ledger exists — nothing has been run" };
   let lines;
   try {
-    lines = readFileSync(f, "utf8").split("\n").filter(Boolean).slice(-MAX_LEDGER_LINES);
+    lines = readLedgerLines(env, cwd);
   } catch (e) {
     return { proven: false, why: `the proof ledger could not be read (${e.message})` };
   }
+  if (lines === null)
+    return { proven: false, why: "no proof ledger exists — nothing has been run" };
   const want = String(goal.doneCommand).replace(/\s+/g, " ").trim();
   // ⚠ A STAMP MUST POSTDATE THE GOAL IT IS CLAIMED TO PROVE. Matching on the command string alone
   // meant re-arming a NEW objective with a previously-used verification reported PROVEN instantly,

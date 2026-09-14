@@ -20,6 +20,19 @@ All notable changes to this project are recorded here. The format follows
   a two-process regression test reproduces that deletion. Own-process cleanup remains automatic.
 - Performance documentation labels the old seven-hook benchmark as historical; the installed Bash
   configuration has seven guards, not four. README protection and input-limit claims are bounded.
+- goal-guard's proof ledger no longer erases stamps. It was bounded by read-trim-rewrite, so once it
+  held 2,000 stamps, a stamp another session appended between that read and the rewrite was lost:
+  28, 42 and 46 of 320 concurrent red stamps in three measured runs, each then reported as "has not
+  been run". A full ledger is now moved aside into a segment (`hooks/_rotating-log.mjs`) and never
+  rewritten; the verdict reads every segment and takes the newest stamp by timestamp, and a red and a
+  green stamped in the same millisecond read red.
+- The fire log uses the same rotation, so concurrent hooks no longer lose count lines at its bound.
+- goal-guard's done-command allowlist no longer backtracks exponentially. An optional drive-letter
+  group in front of a class that already accepts letters and `:` gave each `A:,`-shaped argument two
+  parses: `npx vitest` followed by 24 of them took 0.6 s to refuse, and every two more quadrupled it
+  (CodeQL js/redos). The class alone accepts the same arguments, drive paths included.
+- `init` and `uninstall` read the settings file once. The backup holds exactly the bytes that were
+  merged, and the new file replaces the old one through a temp file and a rename, never a partial write.
 
 ## [0.4.0] — 2026-09-12
 
