@@ -43,16 +43,15 @@
 //   readLog                       → always an object; `unreadable: true` is the failure signal, and
 //                                   it is deliberately distinct from an empty-but-readable log.
 import {
-  appendFileSync,
   readFileSync,
   writeFileSync,
   mkdirSync,
   existsSync,
   realpathSync,
-  statSync,
 } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { createHash } from "node:crypto";
+import { appendLine, readLines } from "./_rotating-log.mjs";
 
 /** XDG state dir, never the repo: a dirty working tree voids every gate result. */
 export function fireLogPath(env = process.env) {
@@ -67,9 +66,10 @@ export function fireLogPath(env = process.env) {
 //
 // ⚠ THE BOUND IS IN BYTES. An earlier LINE bound was gated behind `size > MAX_LINES * 64` to avoid
 // reading the file on every append — but a run line is ~38 bytes, so the byte trigger was never
-// reached and the trim NEVER RAN. Its own test caught it. Size is what statSync reports, so size is
-// what the bound is expressed in. On exceeding MAX, the newest HALF is kept — trimming to exactly the
-// cap would put the file back on the trigger and force a full read on every subsequent append.
+// reached and the trim NEVER RAN. Its own test caught it. Size is what fstat reports, so size is what
+// the bound is expressed in. The live file rotates once it passes KEEP_FIRE_BYTES, and a rotated
+// segment is deleted once the newest KEEP_FIRE_BYTES all sit in newer files, so the log on disk stays
+// near MAX_FIRE_BYTES without ever rewriting a file another hook may be appending to.
 export const MAX_FIRE_BYTES = 2_000_000;
 export const KEEP_FIRE_BYTES = 1_000_000;
 
@@ -122,29 +122,20 @@ export function projectKey(cwd = process.cwd()) {
   return key;
 }
 
+// The live file rotates past KEEP_FIRE_BYTES, and a segment is pruned only once the newest KEEP_FIRE_BYTES
+// sit in newer files, so the log on disk is about MAX_FIRE_BYTES (see _rotating-log.mjs for the bound).
+const FIRE_BOUND = { maxBytes: KEEP_FIRE_BYTES, keep: KEEP_FIRE_BYTES, weight: (l) => Buffer.byteLength(l) + 1 };
+
 function append(line, env) {
   const f = fireLogPath(env);
   if (!f) return false;
   try {
-    mkdirSync(dirname(f), { recursive: true });
-    appendFileSync(f, line);
-    const size = statSync(f).size;
-    // statSync is cheap; reading and rewriting is not — so the read happens only once the file is
-    // genuinely over the cap.
-    //
-    // ⚠ THE RE-CHECK NARROWS THE RACE; IT DOES NOT CLOSE IT. An append landing between the read and
-    // the write is still lost. This is TELEMETRY, the trim runs only above 2 MB, and a handful of
-    // lost count lines at that moment cannot change a verdict that is about "ever fired" and orders
-    // of magnitude. If this log ever becomes evidence rather than a counter, it needs a real lock.
-    if (size > MAX_FIRE_BYTES) {
-      const body = readFileSync(f, "utf8");
-      if (statSync(f).size === size) {
-        // Cut at a line boundary so the trim can never leave a half-line the parser would drop.
-        const cut = body.length - KEEP_FIRE_BYTES;
-        const nl = body.indexOf("\n", cut);
-        writeFileSync(f, nl === -1 ? "" : body.slice(nl + 1));
-      }
-    }
+    // ⚠ BOUNDED BY ROTATION, NEVER BY REWRITING IN PLACE. The old trim read the file, re-checked its
+    // size and wrote the newest half back over the same path, so a line another hook appended between
+    // that read and that write was lost. The re-check narrowed the race without closing it. The goal
+    // ledger shared the pattern and a lost red stamp there is a wrong verdict, so both logs now use
+    // one mechanism that moves a full file aside instead.
+    appendLine(f, line, FIRE_BOUND);
     return true;
   } catch {
     return false; // telemetry never breaks a guard
@@ -291,12 +282,12 @@ export function recordLastSeen(hook, kind, env = process.env) {
 /** @returns {{fires:object[], runs:object[], unreadable:boolean, path:string|null}} */
 export function readLog(env = process.env) {
   const f = fireLogPath(env);
-  if (!f || !existsSync(f))
-    return { fires: [], runs: [], unreadable: false, path: f };
+  if (!f) return { fires: [], runs: [], unreadable: false, path: f };
   try {
     const fires = [];
     const runs = [];
-    for (const line of readFileSync(f, "utf8").split("\n")) {
+    // The live file and its rotated segments; null means neither exists, which is an empty log.
+    for (const line of readLines(f) ?? []) {
       if (!line) continue;
       const [ts, kind, a, b, c, d, e] = line.split("\t");
       // ⚠ `?? "unknown"` and NOT `?? "live"`. Lines written before the ctx field existed cannot be

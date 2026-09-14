@@ -17,6 +17,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  renameSync,
   rmSync,
   rmdirSync,
   writeFileSync,
@@ -124,6 +125,31 @@ function guardFiles(dir) {
 
 function readJson(path) {
   return JSON.parse(readFileSync(path, "utf8"));
+}
+
+/** A file's bytes, or null when it does not exist. Any other error (a directory, no permission) throws. */
+function readIfPresent(path) {
+  try {
+    return readFileSync(path);
+  } catch (e) {
+    if (e.code === "ENOENT") return null;
+    throw e;
+  }
+}
+
+/**
+ * Replace a file whole: write a sibling temp file, then rename it over the target. A reader, or a crash
+ * mid-write, never sees half a settings file. `wx` refuses to write through a temp name that exists.
+ */
+function replaceFile(path, text) {
+  const tmp = `${path}.tmp-${process.pid}-${Date.now()}`;
+  writeFileSync(tmp, text, { flag: "wx" });
+  try {
+    renameSync(tmp, path);
+  } catch (e) {
+    rmSync(tmp, { force: true });
+    throw e;
+  }
 }
 
 /**
@@ -332,22 +358,23 @@ function init(flags, agent = "claude") {
   }
   if (unchanged) say(`${unchanged} hook file(s) already current in ${hooksDir}`);
 
-  // 2. settings
+  // 2. settings — read ONCE. The merge is parsed from these bytes and the backup is written from them,
+  // so the backup is exactly the file that was merged. A separate existence check before a later copy
+  // and write could each see a different file.
   let settings = {};
-  let hadSettings = false;
-  if (existsSync(settingsPath)) {
-    hadSettings = true;
-    try {
-      settings = readJson(settingsPath);
-    } catch (e) {
-      console.error(`refusing to touch ${settingsPath}: it is not valid JSON (${e.message}).`);
-      console.error("Fix or move it, then re-run init. Nothing was written.");
-      return 1;
-    }
-    if (!settings || typeof settings !== "object" || Array.isArray(settings)) {
-      console.error(`refusing to touch ${settingsPath}: top level is not an object.`);
-      return 1;
-    }
+  let raw = null;
+  try {
+    raw = readIfPresent(settingsPath);
+    if (raw !== null) settings = JSON.parse(raw.toString("utf8"));
+  } catch (e) {
+    console.error(`refusing to touch ${settingsPath}: it is not valid JSON (${e.message}).`);
+    console.error("Fix or move it, then re-run init. Nothing was written.");
+    return 1;
+  }
+  const hadSettings = raw !== null;
+  if (hadSettings && (!settings || typeof settings !== "object" || Array.isArray(settings))) {
+    console.error(`refusing to touch ${settingsPath}: top level is not an object.`);
+    return 1;
   }
   const example = agent === "codex" ? codexHooksFor(hooksDir) : exampleHooksFor(hooksDir, isUser);
   for (const sk of example.skipped) say(`skip    ${sk}  (wired in settings.example.json, but that hook does not ship in hooks/ yet)`);
@@ -357,12 +384,12 @@ function init(flags, agent = "claude") {
   } else {
     if (hadSettings) {
       const backup = `${settingsPath}.bak-${timestamp()}`;
-      if (!dry) copyFileSync(settingsPath, backup);
+      if (!dry) writeFileSync(backup, raw, { flag: "wx" });
       say(`backup  ${backup}`);
     }
     if (!dry) {
       mkdirSync(dir, { recursive: true });
-      writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
+      replaceFile(settingsPath, JSON.stringify(settings, null, 2) + "\n");
     }
     say(`${hadSettings ? "merge " : "create"}  ${settingsPath}  (+${added} hook entr${added === 1 ? "y" : "ies"})`);
   }
@@ -620,22 +647,25 @@ function uninstall(flags, agent = "claude") {
   const shipped = packagedHookFiles(agent);
 
   // 1. settings — entries first, so a hook file is never deleted while settings still name it.
+  // Read ONCE, as init does: the unmerge is parsed from these bytes and the backup is written from them.
   let removed = 0;
-  if (existsSync(settingsPath)) {
-    let settings;
-    try {
-      settings = readJson(settingsPath);
-    } catch (e) {
-      console.error(`refusing to touch ${settingsPath}: it is not valid JSON (${e.message}). Nothing was written.`);
-      return 1;
-    }
+  let raw;
+  let settings;
+  try {
+    raw = readIfPresent(settingsPath);
+    if (raw !== null) settings = JSON.parse(raw.toString("utf8"));
+  } catch (e) {
+    console.error(`refusing to touch ${settingsPath}: it is not valid JSON (${e.message}). Nothing was written.`);
+    return 1;
+  }
+  if (raw !== null) {
     removed = unmergeHooks(settings, shipped.filter((f) => f.endsWith(".mjs") && !f.startsWith("_")));
     if (removed === 0) say(`settings reference none of the shipped hooks: ${settingsPath}`);
     else {
       const backup = `${settingsPath}.bak-${timestamp()}`;
-      if (!dry) copyFileSync(settingsPath, backup);
+      if (!dry) writeFileSync(backup, raw, { flag: "wx" });
       say(`backup  ${backup}`);
-      if (!dry) writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
+      if (!dry) replaceFile(settingsPath, JSON.stringify(settings, null, 2) + "\n");
       say(`unmerge ${settingsPath}  (-${removed} hook entr${removed === 1 ? "y" : "ies"}; foreign entries kept)`);
     }
   } else say(`no ${settingsName} at ${settingsPath}`);
