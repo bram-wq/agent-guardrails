@@ -43,9 +43,9 @@ installs and CI runs do not count as independent users.
 ## Try it in 60 seconds, no clone
 
 ```bash
-npx github:bram-wq/agent-guardrails#v0.4.0 try 'git push origin main 2>&1 | tail -2'
-npx github:bram-wq/agent-guardrails#v0.4.0 try 'yes for sure'
-npx github:bram-wq/agent-guardrails#v0.4.0 demo
+npx github:bram-wq/agent-guardrails#v0.5.0 try 'git push origin main 2>&1 | tail -2'
+npx github:bram-wq/agent-guardrails#v0.5.0 try 'yes for sure'
+npx github:bram-wq/agent-guardrails#v0.5.0 demo
 ```
 
 `try` feeds a shell command through every Bash guard exactly as Claude Code would and prints each
@@ -62,10 +62,10 @@ For a technical evaluation, start with the [engineering review](docs/ENGINEERING
 the execution boundary, reproducible checks, findings repaired, and remaining limits.
 
 ```bash
-npx github:bram-wq/agent-guardrails#v0.4.0 init       # copies hooks/ into ./.claude/hooks/, merges settings.json (backup first)
-npx github:bram-wq/agent-guardrails#v0.4.0 doctor     # each hook allows a benign event of its own type AND refuses its incident
-npx github:bram-wq/agent-guardrails#v0.4.0 report     # runs / fires / rate per hook for THIS project, with the denominator
-npx github:bram-wq/agent-guardrails#v0.4.0 uninstall  # removes only what init added; a hook you modified is kept and named
+npx github:bram-wq/agent-guardrails#v0.5.0 init       # copies hooks/ into ./.claude/hooks/, merges settings.json (backup first)
+npx github:bram-wq/agent-guardrails#v0.5.0 doctor     # each hook allows a benign event of its own type AND refuses its incident
+npx github:bram-wq/agent-guardrails#v0.5.0 report     # runs / fires / rate per hook for THIS project, with the denominator
+npx github:bram-wq/agent-guardrails#v0.5.0 uninstall  # removes only what init added; a hook you modified is kept and named
 ```
 
 `init` is idempotent, never clobbers a hook you already have, and installs nothing into
@@ -159,7 +159,7 @@ With no goal set the hook never fires; setting a goal is the act that arms it.
 ## Write your own
 
 ```bash
-npx github:bram-wq/agent-guardrails#v0.4.0 new my-guard   # hooks/my-guard.mjs + hooks/my-guard.test.mjs, tests pre-written in pairs
+npx github:bram-wq/agent-guardrails#v0.5.0 new my-guard   # hooks/my-guard.mjs + hooks/my-guard.test.mjs, tests pre-written in pairs
 ```
 
 The scaffold carries the contract so you cannot get it wrong by accident: parse inside a try that
