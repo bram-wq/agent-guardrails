@@ -5,6 +5,8 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-09-14
+
 ### Added
 
 - `doctor --strict`: checks complete shipped registrations, including event/matcher routing and
@@ -33,6 +35,12 @@ All notable changes to this project are recorded here. The format follows
   (CodeQL js/redos). The class alone accepts the same arguments, drive paths included.
 - `init` and `uninstall` read the settings file once. The backup holds exactly the bytes that were
   merged, and the new file replaces the old one through a temp file and a rename, never a partial write.
+
+### Changed
+
+- CI actions are updated to actions/checkout 7.0.1, actions/setup-node 7.0.0, actions/upload-artifact
+  7.0.1 and github/codeql-action 4.38.0, still pinned to commit SHAs (#5). This clears the runners'
+  Node.js 20 deprecation warning.
 
 ## [0.4.0] — 2026-09-12
 
